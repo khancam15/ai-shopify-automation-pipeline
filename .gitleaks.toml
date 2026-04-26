@@ -1,0 +1,11 @@
+[allowlist]
+description = "Known safe placeholders and redaction markers"
+paths = [
+  '''^\.env\.example$''',
+  '''^history_list\.txt$'''
+]
+regexes = [
+  '''your_anthropic_api_key_here''',
+  '''your_serper_api_key_here''',
+  '''<REDACTED_ROTATE_THIS_KEY>'''
+]

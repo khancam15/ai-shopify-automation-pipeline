@@ -124,4 +124,4 @@ Uses Claude computer-use beta to drive the browser autonomously. Requires the [A
 
 ## License
 
-MIT
+[MIT](LICENSE)

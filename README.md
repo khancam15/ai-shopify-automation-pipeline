@@ -27,7 +27,7 @@ etsybot/
 ├── pyproject.toml            # Project metadata + Python tooling config
 ├── README.md                 # Project overview and usage
 ├── requirements.txt          # Minimal dependency list for quick setup
-├── prompts/
+├── prompts_example/
 │   └── master.txt            # Canonical master prompt template (tracked)
 ├── scripts/
 │   ├── etsy_brand_crew.py    # Phase 1 — CrewAI brand builder (5 agents)
@@ -35,7 +35,7 @@ etsybot/
 │   └── etsy_autonomous.py    # Phase 2 (alt) — Claude Chrome extension prompt engine
 └── outputs/
     ├── brand_guide.md        # Generated brand guide (git-ignored)
-    ├── master.txt            # Runtime master prompt file generated from prompts/master.txt
+    ├── master.txt            # Runtime master prompt file generated from prompts_example/master.txt
     ├── week_log.md           # Execution log per task (git-ignored)
     ├── feedback_report.md    # Week 4 tag performance analysis (git-ignored)
     └── executor_state.json   # Resumable run state (git-ignored)
@@ -108,7 +108,7 @@ python scripts/etsy_launch_executor.py
 ```
 
 Reads `outputs/brand_guide.md` and appends a weekly execution prompt for each task.
-Use `prompts/master.txt` as your tracked source template and `outputs/master.txt` as the runtime file in Claude Chrome extension.
+Use `prompts_example/master.txt` as your tracked source template and `outputs/master.txt` as the runtime file in Claude Chrome extension.
 
 ### Phase 2 (alt) — Execute Launch (fully autonomous)
 
@@ -117,7 +117,7 @@ python scripts/etsy_autonomous.py
 ```
 
 Generates expanded prompts and completion checklists for pasting into the Claude Chrome extension.
-Like the main launcher, it seeds from `prompts/master.txt` and writes execution-ready content into `outputs/master.txt`.
+Like the main launcher, it seeds from `prompts_example/master.txt` and writes execution-ready content into `outputs/master.txt`.
 
 > **Safety note:** Launch prompts enforce no Publish or Purchase action without explicit user confirmation.
 

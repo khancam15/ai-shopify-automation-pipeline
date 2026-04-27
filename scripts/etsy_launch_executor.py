@@ -46,7 +46,7 @@ MODEL          = "claude-opus-4-6"
 BRAND_GUIDES   = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE     = Path("outputs/executor_state.json")
 OUTPUTS_DIR    = Path("outputs")
-MASTER_TEMPLATE_FILE = Path("prompts/master.txt")
+MASTER_TEMPLATE_FILE = Path("prompts_example/master.txt")
 MASTER_PROMPT_FILE = OUTPUTS_DIR / "master.txt"
 OUTPUTS_DIR.mkdir(exist_ok=True)
 
@@ -124,7 +124,7 @@ def load_state() -> dict | None:
 
 
 def initialize_master_prompt_file() -> None:
-    """Create or reset outputs/master.txt from prompts/master.txt when available."""
+    """Create or reset outputs/master.txt from prompts_example/master.txt when available."""
     if MASTER_TEMPLATE_FILE.exists():
         template = MASTER_TEMPLATE_FILE.read_text(encoding="utf-8").rstrip()
         MASTER_PROMPT_FILE.write_text(f"{template}\n\n", encoding="utf-8")

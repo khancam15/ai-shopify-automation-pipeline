@@ -8,9 +8,9 @@ An end-to-end AI-powered pipeline that researches a niche, builds a full brand i
 
 | Phase | Script | What happens |
 |-------|--------|-------------|
-| **1 — Brand Build** | `etsy_brand_crew.py` | A 5-agent CrewAI crew runs live market research (via Serper), defines brand strategy, visual identity, SEO copy, and writes a complete `outputs/brand_guide.md` |
-| **2 — Launch Execution** | `etsy_launch_executor.py` | Reads `outputs/brand_guide.md`, extracts the 30-day checklist, and dispatches per-week Claude agents that generate step-by-step "Claude in Chrome" prompts for each task |
-| **2 (alt) — Autonomous** | `etsy_autonomous.py` | Same as above but uses Claude computer-use beta to execute tasks fully autonomously via browser control |
+| **1 — Brand Build** | `scripts/etsy_brand_crew.py` | A 5-agent CrewAI crew runs live market research (via Serper), defines brand strategy, visual identity, SEO copy, and writes a complete `outputs/brand_guide.md` |
+| **2 — Launch Execution** | `scripts/etsy_launch_executor.py` | Reads `outputs/brand_guide.md`, extracts the 30-day checklist, and dispatches per-week Claude agents that generate step-by-step "Claude in Chrome" prompts for each task |
+| **2 (alt) — Autonomous** | `scripts/etsy_autonomous.py` | Same as above but uses Claude computer-use beta to execute tasks fully autonomously via browser control |
 
 ---
 
@@ -18,18 +18,21 @@ An end-to-end AI-powered pipeline that researches a niche, builds a full brand i
 
 ```
 etsybot/
-├── etsy_brand_crew.py        # Phase 1 — CrewAI brand builder (5 agents)
-├── etsy_launch_executor.py   # Phase 2 — Weekly executor with Claude prompts
-├── etsy_autonomous.py        # Phase 2 (alt) — Autonomous computer-use executor
+├── .config/
+│   └── .gitleaks.toml        # Hidden gitleaks configuration
 ├── .env.example              # Credential template (copy to .env)
 ├── .gitignore                # Protects secrets, outputs, venv, history
 ├── .pre-commit-config.yaml   # gitleaks secret scanning on every commit
-├── .gitleaks.toml            # Allowlist for known safe placeholders
+├── README.md                 # Project overview and usage
+├── scripts/
+│   ├── etsy_brand_crew.py    # Phase 1 — CrewAI brand builder (5 agents)
+│   ├── etsy_launch_executor.py # Phase 2 — Weekly executor with Claude prompts
+│   └── etsy_autonomous.py    # Phase 2 (alt) — Autonomous computer-use executor
 └── outputs/
-	├── brand_guide.md        # Generated brand guide (git-ignored)
-	├── week_log.md           # Execution log per task (git-ignored)
-	├── feedback_report.md    # Week 4 tag performance analysis (git-ignored)
-	└── executor_state.json   # Resumable run state (git-ignored)
+    ├── brand_guide.md        # Generated brand guide (git-ignored)
+    ├── week_log.md           # Execution log per task (git-ignored)
+    ├── feedback_report.md    # Week 4 tag performance analysis (git-ignored)
+    └── executor_state.json   # Resumable run state (git-ignored)
 ```
 
 ---
@@ -40,7 +43,7 @@ etsybot/
 > **Store:** The Freelance Command Center  
 > **Positioning:** Unified Notion templates helping independent freelancers track income, manage clients, and prepare taxes.
 
-To run on a different niche, change the `NICHE` constant at the top of `etsy_brand_crew.py`.
+To run on a different niche, change the `NICHE` constant at the top of `scripts/etsy_brand_crew.py`.
 
 ---
 
@@ -85,7 +88,7 @@ pre-commit install
 ### Phase 1 — Generate Brand Guide
 
 ```bash
-python etsy_brand_crew.py
+python scripts/etsy_brand_crew.py
 ```
 
 Runs live research and writes `outputs/brand_guide.md`. Takes ~3–8 minutes depending on API speed.
@@ -93,7 +96,7 @@ Runs live research and writes `outputs/brand_guide.md`. Takes ~3–8 minutes dep
 ### Phase 2 — Execute Launch (prompt-assisted)
 
 ```bash
-python etsy_launch_executor.py
+python scripts/etsy_launch_executor.py
 ```
 
 Reads `outputs/brand_guide.md` and prints a "Claude in Chrome" prompt for each task. Paste each prompt into Claude in Chrome to execute in your browser.
@@ -101,7 +104,7 @@ Reads `outputs/brand_guide.md` and prints a "Claude in Chrome" prompt for each t
 ### Phase 2 (alt) — Execute Launch (fully autonomous)
 
 ```bash
-python etsy_autonomous.py
+python scripts/etsy_autonomous.py
 ```
 
 Uses Claude computer-use beta to drive the browser autonomously. Requires the [Anthropic computer-use Docker image](https://github.com/anthropics/anthropic-quickstarts).

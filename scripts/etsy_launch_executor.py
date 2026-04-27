@@ -19,9 +19,9 @@ Requirements:
     pip install anthropic python-dotenv rich
 
 Run:
-    python etsy_launch_executor.py
+    python scripts/etsy_launch_executor.py
 
-Run this from the project root after etsy_brand_crew.py generates outputs/brand_guide.md
+Run this from the project root after scripts/etsy_brand_crew.py generates outputs/brand_guide.md
 """
 
 import os

@@ -6,7 +6,7 @@ Reads the generated brand guide, extracts the 30-day checklist, and executes
 each task autonomously using Claude computer use — no Claude in Chrome needed.
 
 Run:
-    python etsy_autonomous.py
+    python scripts/etsy_autonomous.py
 
 Requirements:
     pip install anthropic python-dotenv rich

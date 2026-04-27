@@ -1,8 +1,8 @@
 """
 etsy_brand_crew.py
 ──────────────────
-Drop this into /Users/khancam/ai_ops and run:
-    python etsy_brand_crew.py
+Run from the project root:
+    python scripts/etsy_brand_crew.py
 
 Requires:
     pip install crewai crewai-tools

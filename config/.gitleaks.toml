@@ -1,8 +1,8 @@
 [allowlist]
 description = "Known safe placeholders and redaction markers"
 paths = [
-  '''^\.env\.example$''',
-  '''^history_list\.txt$'''
+  '''^.env.example$''',
+  '''^history_list.txt$'''
 ]
 regexes = [
   '''your_anthropic_api_key_here''',

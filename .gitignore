@@ -18,8 +18,9 @@ __pycache__/
 .ruff_cache/
 .coverage
 
-# Generated outputs
-outputs/
+# Generated outputs (keep directory skeleton in git)
+outputs/*
+!outputs/.gitkeep
 *.log
 
 # OS / editor
@@ -28,5 +29,10 @@ outputs/
 .idea/
 
 # Local state
+executor_state.json
+history_list.txt
+
+# Scripts cache (never commit compiled bytecode)
+scripts/__pycache__/
 executor_state.json
 history_list.txt

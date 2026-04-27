@@ -1,0 +1,6 @@
+anthropic
+crewai
+crewai-tools
+python-dotenv
+rich
+pre-commit

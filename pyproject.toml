@@ -1,0 +1,16 @@
+[project]
+name = "ai-etsy-product-pipeline"
+version = "0.1.0"
+description = "AI-powered Etsy digital product launch pipeline"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic",
+  "crewai",
+  "crewai-tools",
+  "python-dotenv",
+  "rich",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

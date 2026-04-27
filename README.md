@@ -1,4 +1,4 @@
-# Etsy Digital Product Pipeline
+# AI Etsy Product Pipeline
 
 An end-to-end AI-powered pipeline that researches a niche, builds a full brand identity, and autonomously executes a 30-day Etsy store launch — driven by Claude AI, CrewAI, and Python automation.
 
@@ -22,8 +22,11 @@ etsybot/
 │   └── .gitleaks.toml        # Hidden gitleaks configuration
 ├── .env.example              # Credential template (copy to .env)
 ├── .gitignore                # Protects secrets, outputs, venv, history
+├── LICENSE                   # MIT license for GitHub/reuse clarity
 ├── .pre-commit-config.yaml   # gitleaks secret scanning on every commit
+├── pyproject.toml            # Project metadata + Python tooling config
 ├── README.md                 # Project overview and usage
+├── requirements.txt          # Minimal dependency list for quick setup
 ├── scripts/
 │   ├── etsy_brand_crew.py    # Phase 1 — CrewAI brand builder (5 agents)
 │   ├── etsy_launch_executor.py # Phase 2 — Weekly executor with Claude prompts
@@ -54,7 +57,8 @@ To run on a different niche, change the `NICHE` constant at the top of `scripts/
 - A [Serper API key](https://serper.dev) (for live market research in Phase 1)
 
 ```bash
-pip install anthropic crewai crewai-tools python-dotenv rich pre-commit
+pip install -r requirements.txt
+pip install pre-commit
 ```
 
 ---
@@ -63,15 +67,16 @@ pip install anthropic crewai crewai-tools python-dotenv rich pre-commit
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/khancam15/etsy-digital-product-pipeline.git
-cd etsy-digital-product-pipeline
+git clone https://github.com/khancam15/ai-etsy-product-pipeline.git
+cd ai-etsy-product-pipeline
 
 # 2. Create and activate a virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
 # 3. Install dependencies
-pip install anthropic crewai crewai-tools python-dotenv rich pre-commit
+pip install -r requirements.txt
+pip install pre-commit
 
 # 4. Configure credentials
 cp .env.example .env

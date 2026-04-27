@@ -34,6 +34,7 @@ MODEL      = "claude-haiku-4-5-20251001"
 BRAND_FILES = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE = Path("outputs/executor_state.json")
 LOG_FILE   = Path("outputs/week_log.md")
+MASTER_TEMPLATE_FILE = Path("prompts/master.txt")
 MASTER_PROMPT_FILE = Path("outputs/master.txt")
 Path("outputs").mkdir(exist_ok=True)
 
@@ -88,7 +89,12 @@ def load_state() -> dict | None:
 
 
 def initialize_master_prompt_file() -> None:
-    """Create or reset the consolidated weekly prompt file."""
+    """Create or reset outputs/master.txt from prompts/master.txt when available."""
+    if MASTER_TEMPLATE_FILE.exists():
+        template = MASTER_TEMPLATE_FILE.read_text(encoding="utf-8").rstrip()
+        MASTER_PROMPT_FILE.write_text(f"{template}\n\n", encoding="utf-8")
+        return
+
     MASTER_PROMPT_FILE.write_text(
         "# Master Claude Chrome Extension Prompts\n\n"
         "Use this file to execute each weekly launch task in Claude Chrome extension.\n"

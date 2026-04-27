@@ -9,7 +9,7 @@ An end-to-end AI-powered pipeline that researches a niche, builds a full brand i
 | Phase | Script | What happens |
 |-------|--------|-------------|
 | **1 — Brand Build** | `scripts/etsy_brand_crew.py` | A 5-agent CrewAI crew runs live market research (via Serper), defines brand strategy, visual identity, SEO copy, and writes a complete `outputs/brand_guide.md` |
-| **2 — Launch Execution** | `scripts/etsy_launch_executor.py` | Reads `outputs/brand_guide.md`, extracts the 30-day checklist, and writes weekly Claude Chrome extension prompts into `outputs/master.txt` |
+| **2 — Launch Execution** | `scripts/etsy_launch_executor.py` | Reads `outputs/brand_guide.md`, extracts the 30-day checklist, and appends weekly Claude Chrome extension prompts into `outputs/master.txt` |
 | **2 (alt) — Extension Prompt Engine** | `scripts/etsy_autonomous.py` | Generates richer weekly prompts and checklists in `outputs/master.txt` for Claude Chrome extension execution |
 
 ---
@@ -27,13 +27,15 @@ etsybot/
 ├── pyproject.toml            # Project metadata + Python tooling config
 ├── README.md                 # Project overview and usage
 ├── requirements.txt          # Minimal dependency list for quick setup
+├── prompts/
+│   └── master.txt            # Canonical master prompt template (tracked)
 ├── scripts/
 │   ├── etsy_brand_crew.py    # Phase 1 — CrewAI brand builder (5 agents)
 │   ├── etsy_launch_executor.py # Phase 2 — Weekly executor with Claude prompts
 │   └── etsy_autonomous.py    # Phase 2 (alt) — Claude Chrome extension prompt engine
 └── outputs/
     ├── brand_guide.md        # Generated brand guide (git-ignored)
-    ├── master.txt            # Master weekly prompts for Claude Chrome extension
+    ├── master.txt            # Runtime master prompt file generated from prompts/master.txt
     ├── week_log.md           # Execution log per task (git-ignored)
     ├── feedback_report.md    # Week 4 tag performance analysis (git-ignored)
     └── executor_state.json   # Resumable run state (git-ignored)
@@ -105,8 +107,8 @@ Runs live research and writes `outputs/brand_guide.md`. Takes ~3–8 minutes dep
 python scripts/etsy_launch_executor.py
 ```
 
-Reads `outputs/brand_guide.md` and prints a "Claude in Chrome" prompt for each task. Paste each prompt into Claude in Chrome to execute in your browser.
-Use `outputs/master.txt` as the master file to execute each week's tasks in Claude Chrome extension.
+Reads `outputs/brand_guide.md` and appends a weekly execution prompt for each task.
+Use `prompts/master.txt` as your tracked source template and `outputs/master.txt` as the runtime file in Claude Chrome extension.
 
 ### Phase 2 (alt) — Execute Launch (fully autonomous)
 
@@ -115,7 +117,7 @@ python scripts/etsy_autonomous.py
 ```
 
 Generates expanded prompts and completion checklists for pasting into the Claude Chrome extension.
-Use `outputs/master.txt` as the single prompt source for each week's execution.
+Like the main launcher, it seeds from `prompts/master.txt` and writes execution-ready content into `outputs/master.txt`.
 
 > **Safety note:** Launch prompts enforce no Publish or Purchase action without explicit user confirmation.
 

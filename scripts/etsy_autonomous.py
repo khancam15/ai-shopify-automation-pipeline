@@ -1,9 +1,9 @@
 """
 etsy_autonomous.py
 ──────────────────
-Fully autonomous Phase 2 executor.
-Reads the generated brand guide, extracts the 30-day checklist, and executes
-each task autonomously using Claude computer use — no Claude in Chrome needed.
+Phase 2 executor for Claude Chrome extension workflow.
+Reads the generated brand guide, extracts the 30-day checklist, and generates
+ready-to-paste prompts for each launch task.
 
 Run:
     python scripts/etsy_autonomous.py
@@ -23,39 +23,19 @@ from dotenv import load_dotenv
 import anthropic
 from rich.console import Console
 from rich.panel import Panel
+from rich import print as rprint
 
 load_dotenv()
 
 console = Console()
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-# ── Claude 3.5 Sonnet is the correct model for computer use ──────────────────
-MODEL      = "claude-3-5-sonnet-20241022"
+MODEL      = "claude-haiku-4-5-20251001"
 BRAND_FILES = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE = Path("outputs/executor_state.json")
 LOG_FILE   = Path("outputs/week_log.md")
+MASTER_PROMPT_FILE = Path("outputs/master.txt")
 Path("outputs").mkdir(exist_ok=True)
-
-# ── Correct computer use tool definitions ─────────────────────────────────────
-TOOLS = [
-    {
-        "type": "computer_20241022",
-        "name": "computer",
-        "display_width_px": 1280,
-        "display_height_px": 800,
-        "display_number": 1,
-    },
-    {
-        "type": "text_editor_20241022",
-        "name": "str_replace_editor",
-    },
-    {
-        "type": "bash_20241022",
-        "name": "bash",
-    },
-]
-
-BETA = ["computer-use-2024-10-22"]
 
 # ── Load brand guide ──────────────────────────────────────────────────────────
 def load_brand_guide() -> str:
@@ -106,66 +86,55 @@ def load_state() -> dict | None:
         return json.loads(STATE_FILE.read_text(encoding="utf-8"))
     return None
 
-# ── System prompt ─────────────────────────────────────────────────────────────
-def build_system_prompt(guide: str, week: str) -> str:
-    return f"""You are an autonomous Etsy store launch agent for "The Freelance Command Center".
 
-You have full access to a web browser, a text editor, and a bash terminal.
-Use these tools to complete the assigned task fully and verify success before finishing.
+def initialize_master_prompt_file() -> None:
+    """Create or reset the consolidated weekly prompt file."""
+    MASTER_PROMPT_FILE.write_text(
+        "# Master Claude Chrome Extension Prompts\n\n"
+        "Use this file to execute each weekly launch task in Claude Chrome extension.\n"
+        f"Generated: {datetime.now().isoformat()}\n\n",
+        encoding="utf-8",
+    )
 
-## Brand context
-{guide[:3000]}
 
-## Week
-{week}
+def append_master_prompt(week_label: str, task_number: int, task_text: str, prompt: str) -> None:
+    entry = (
+        f"## {week_label} · Task {task_number}\n"
+        f"Task: {task_text}\n\n"
+        f"{prompt}\n\n"
+        "---\n\n"
+    )
+    with open(MASTER_PROMPT_FILE, "a", encoding="utf-8") as f:
+        f.write(entry)
 
-## Rules
-- Navigate to the correct platform for each task (Canva, Etsy, Pinterest, Instagram).
-- For Canva: go to canva.com, apply brand colors (#2C3E50 charcoal, #DAA520 gold, #F5F1E8 cream), use Poppins for headings.
-- For Etsy: go to etsy.com/your/shops/me/tools — do NOT click publish or purchase without user approval.
-- If you encounter a CAPTCHA, 2FA prompt, or login screen, stop and report it.
-- Never enter payment details or passwords.
-- After each task, briefly confirm what was done and what URL or file was produced.
-"""
-
-# ── Execute one task ──────────────────────────────────────────────────────────
-def execute_task(task: str, guide: str, week: str) -> str:
-    messages = [{"role": "user", "content": f"Complete this task now: {task}"}]
-    system   = build_system_prompt(guide, week)
-    output   = ""
-
-    for _ in range(20):  # max 20 tool-use turns per task
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=system,
-            tools=TOOLS,
-            messages=messages,
-            betas=BETA,
-        )
-
-        for block in response.content:
-            if hasattr(block, "text") and block.text:
-                output += block.text
-
-        if response.stop_reason == "end_turn":
-            break
-
-        if response.stop_reason == "tool_use":
-            messages.append({"role": "assistant", "content": response.content})
-            results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    results.append({
-                        "type":        "tool_result",
-                        "tool_use_id": block.id,
-                        "content":     f"[{block.name} executed with input: {str(block.input)[:300]}]",
-                    })
-            messages.append({"role": "user", "content": results})
-        else:
-            break
-
-    return output.strip()
+# ── Prompt generation for Claude Chrome extension ────────────────────────────
+def build_extension_prompt(task: str, guide: str, week: str) -> str:
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1200,
+        system=(
+            "You are an Etsy launch execution planner. "
+            "Generate one high-quality prompt the user can paste into the Claude Chrome extension. "
+            "The prompt must include objective, exact steps, constraints, and a completion checklist."
+        ),
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    f"Week: {week}\n"
+                    f"Task: {task}\n\n"
+                    "Brand guide context:\n"
+                    f"{guide[:3200]}\n\n"
+                    "Output format:\n"
+                    "1) Goal\n"
+                    "2) Step-by-step browser actions\n"
+                    "3) Safety constraints (no publish/purchase without confirmation)\n"
+                    "4) Done checklist with proof items"
+                ),
+            }
+        ],
+    )
+    return response.content[0].text.strip()
 
 # ── Run one week ──────────────────────────────────────────────────────────────
 LABELS = {
@@ -185,9 +154,11 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
             continue
 
         console.print(f"\n  [bold cyan]Task {i+1}/{len(tasks)}:[/bold cyan] {item['task'][:70]}")
-        console.print("  [dim]Claude executing...[/dim]")
+        console.print("  [dim]Generating Claude Chrome extension prompt...[/dim]")
 
-        result = execute_task(item["task"], guide, label)
+        result = build_extension_prompt(item["task"], guide, label)
+        rprint(f"\n[bold yellow]--- PASTE INTO CLAUDE CHROME EXTENSION ---[/bold yellow]\n{result}\n")
+        append_master_prompt(label, i + 1, item["task"], result)
 
         item["status"]       = "completed"
         item["result"]       = result[:400]
@@ -206,8 +177,8 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     console.print(Panel(
-        "[bold]The Freelance Command Center — Autonomous Executor[/bold]\n"
-        "[dim]claude-3-5-sonnet · computer use · outputs/brand_guide.md[/dim]",
+        "[bold]The Freelance Command Center — Launch Executor[/bold]\n"
+        "[dim]Claude Chrome extension workflow · outputs/brand_guide.md[/dim]",
         style="cyan"
     ))
 
@@ -216,10 +187,13 @@ def main():
     state = load_state()
     if state:
         console.print("[yellow]Resuming from saved state.[/yellow]")
+        if not MASTER_PROMPT_FILE.exists():
+            initialize_master_prompt_file()
     else:
         checklist = extract_checklist(guide)
         state = {"started_at": datetime.now().isoformat(), "checklist": checklist}
         save_state(state)
+        initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")
 
     for key in ["week_1", "week_2", "week_3", "week_4"]:
@@ -238,7 +212,9 @@ def main():
     total = sum(len(v) for v in state["checklist"].values())
     console.print(Panel(
         f"[bold green]Launch complete[/bold green]\n\n"
-        f"Tasks: {done}/{total}\nLog: outputs/week_log.md",
+        f"Tasks: {done}/{total}\n"
+        f"Log: outputs/week_log.md\n"
+        f"Master prompts: outputs/master.txt",
         style="green"
     ))
 

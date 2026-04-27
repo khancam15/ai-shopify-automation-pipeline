@@ -5,15 +5,15 @@ Phase 2 of the Etsy Brand Builder pipeline.
 
 Reads the generated brand guide from Phase 1, extracts the 30-day
 checklist, and dispatches four weekly Claude executor agents that run
-autonomously via the Anthropic API using computer use (browser control).
+through prompt generation for the Claude Chrome extension.
 
-Each agent receives:
+Each generated prompt includes:
   - The full brand guide context
   - Its week-specific task list
-  - A browser session (Claude in Chrome)
+    - Clear execution constraints for a Claude in Chrome browser session
 
-Week 4 includes a feedback loop: Claude reads Etsy Stats, scores tag
-performance, and patches the task queue for the next optimization cycle.
+Week 4 includes a feedback loop prompt: Claude reads Etsy Stats, scores tag
+performance, and recommends the next optimization cycle.
 
 Requirements:
     pip install anthropic python-dotenv rich
@@ -46,6 +46,7 @@ MODEL          = "claude-opus-4-6"
 BRAND_GUIDES   = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE     = Path("outputs/executor_state.json")
 OUTPUTS_DIR    = Path("outputs")
+MASTER_PROMPT_FILE = OUTPUTS_DIR / "master.txt"
 OUTPUTS_DIR.mkdir(exist_ok=True)
 
 
@@ -119,6 +120,27 @@ def load_state() -> dict | None:
     if STATE_FILE.exists():
         return json.loads(STATE_FILE.read_text(encoding="utf-8"))
     return None
+
+
+def initialize_master_prompt_file() -> None:
+    """Create or reset the consolidated weekly prompt file."""
+    MASTER_PROMPT_FILE.write_text(
+        "# Master Claude Chrome Extension Prompts\n\n"
+        "Use this file to execute each weekly launch task in Claude Chrome extension.\n"
+        f"Generated: {datetime.now().isoformat()}\n\n",
+        encoding="utf-8",
+    )
+
+
+def append_master_prompt(week_label: str, task_number: int, task_text: str, prompt: str) -> None:
+    entry = (
+        f"## {week_label} · Task {task_number}\n"
+        f"Task: {task_text}\n\n"
+        f"{prompt}\n\n"
+        "---\n\n"
+    )
+    with open(MASTER_PROMPT_FILE, "a", encoding="utf-8") as f:
+        f.write(entry)
 
 
 # ─── STEP 4 — SINGLE-TASK EXECUTOR ───────────────────────────────────────────
@@ -241,6 +263,13 @@ def run_weekly_agent(
                 week_key=week_key,
             )
 
+        append_master_prompt(
+            week_label=label,
+            task_number=task_number,
+            task_text=item["task"],
+            prompt=result,
+        )
+
         # Mark complete and log
         item["status"]    = "completed"
         item["result"]    = result[:500]
@@ -358,6 +387,8 @@ def main() -> None:
     state = load_state()
     if state:
         console.print("[yellow]Resuming from saved state.[/yellow]")
+        if not MASTER_PROMPT_FILE.exists():
+            initialize_master_prompt_file()
     else:
         checklist = extract_checklist(brand_guide)
         state = {
@@ -366,6 +397,7 @@ def main() -> None:
             "feedback":   None,
         }
         save_state(state)
+        initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")
 
     checklist = state["checklist"]
@@ -404,6 +436,7 @@ def main() -> None:
         f"[bold green]Launch complete[/bold green]\n\n"
         f"Tasks completed: {completed}/{total}\n"
         f"Week log:        outputs/week_log.md\n"
+        f"Master prompts:  outputs/master.txt\n"
         f"Feedback report: outputs/feedback_report.md\n"
         f"State file:      outputs/executor_state.json",
         style="green",

@@ -2,7 +2,7 @@
 etsy_autonomous.py
 ──────────────────
 Fully autonomous Phase 2 executor.
-Reads brand_guide.md, extracts the 30-day checklist, and executes
+Reads the generated brand guide, extracts the 30-day checklist, and executes
 each task autonomously using Claude computer use — no Claude in Chrome needed.
 
 Run:
@@ -31,7 +31,7 @@ client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # ── Claude 3.5 Sonnet is the correct model for computer use ──────────────────
 MODEL      = "claude-3-5-sonnet-20241022"
-BRAND_FILE = Path("brand_guide.md")
+BRAND_FILES = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE = Path("outputs/executor_state.json")
 LOG_FILE   = Path("outputs/week_log.md")
 Path("outputs").mkdir(exist_ok=True)
@@ -59,12 +59,17 @@ BETA = ["computer-use-2024-10-22"]
 
 # ── Load brand guide ──────────────────────────────────────────────────────────
 def load_brand_guide() -> str:
-    if not BRAND_FILE.exists():
+    for brand_file in BRAND_FILES:
+        if brand_file.exists():
+            return brand_file.read_text(encoding="utf-8")
+
+    preferred_file = BRAND_FILES[0]
+    fallback_file = BRAND_FILES[1]
+    if not preferred_file.exists():
         raise FileNotFoundError(
-            f"brand_guide.md not found at {BRAND_FILE.resolve()}\n"
+            f"Brand guide not found at {preferred_file.resolve()} or {fallback_file.resolve()}\n"
             "Run etsy_brand_crew.py first."
         )
-    return BRAND_FILE.read_text(encoding="utf-8")
 
 # ── Extract checklist ─────────────────────────────────────────────────────────
 def extract_checklist(guide: str) -> dict:
@@ -89,7 +94,7 @@ def extract_checklist(guide: str) -> dict:
             for item in items
         ]
     total = sum(len(v) for v in checklist.values())
-    console.print(f"[dim]Extracted {total} tasks from brand_guide.md[/dim]")
+    console.print(f"[dim]Extracted {total} tasks from the generated brand guide[/dim]")
     return checklist
 
 # ── State management ──────────────────────────────────────────────────────────
@@ -202,7 +207,7 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
 def main():
     console.print(Panel(
         "[bold]The Freelance Command Center — Autonomous Executor[/bold]\n"
-        "[dim]claude-3-5-sonnet · computer use · brand_guide.md[/dim]",
+        "[dim]claude-3-5-sonnet · computer use · outputs/brand_guide.md[/dim]",
         style="cyan"
     ))
 

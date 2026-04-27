@@ -3,7 +3,7 @@ etsy_launch_executor.py
 ────────────────────────
 Phase 2 of the Etsy Brand Builder pipeline.
 
-Reads brand_guide.md produced by CrewAI Phase 1, extracts the 30-day
+Reads the generated brand guide from Phase 1, extracts the 30-day
 checklist, and dispatches four weekly Claude executor agents that run
 autonomously via the Anthropic API using computer use (browser control).
 
@@ -21,7 +21,7 @@ Requirements:
 Run:
     python etsy_launch_executor.py
 
-Place this file in /Users/khancam/ai_ops alongside brand_guide.md
+Run this from the project root after etsy_brand_crew.py generates outputs/brand_guide.md
 """
 
 import os
@@ -43,7 +43,7 @@ console = Console()
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 MODEL          = "claude-opus-4-6"
-BRAND_GUIDE    = Path("brand_guide.md")
+BRAND_GUIDES   = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE     = Path("outputs/executor_state.json")
 OUTPUTS_DIR    = Path("outputs")
 OUTPUTS_DIR.mkdir(exist_ok=True)
@@ -52,20 +52,24 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 # ─── STEP 1 — LOAD BRAND GUIDE ───────────────────────────────────────────────
 
 def load_brand_guide() -> str:
-    """Read brand_guide.md from disk. Raise clearly if missing."""
-    if not BRAND_GUIDE.exists():
-        raise FileNotFoundError(
-            f"brand_guide.md not found at {BRAND_GUIDE.resolve()}\n"
-            "Run etsy_brand_crew.py first to generate it."
-        )
-    return BRAND_GUIDE.read_text(encoding="utf-8")
+    """Read the generated brand guide from disk. Raise clearly if missing."""
+    for brand_guide in BRAND_GUIDES:
+        if brand_guide.exists():
+            return brand_guide.read_text(encoding="utf-8")
+
+    preferred_file = BRAND_GUIDES[0]
+    fallback_file = BRAND_GUIDES[1]
+    raise FileNotFoundError(
+        f"Brand guide not found at {preferred_file.resolve()} or {fallback_file.resolve()}\n"
+        "Run etsy_brand_crew.py first to generate it."
+    )
 
 
 # ─── STEP 2 — EXTRACT 30-DAY CHECKLIST ───────────────────────────────────────
 
 def extract_checklist(brand_guide: str) -> dict[str, list[dict]]:
     """
-    Parse the four weekly sections from brand_guide.md.
+    Parse the four weekly sections from the generated brand guide.
     Returns a dict: {"week_1": [...], "week_2": [...], ...}
     Each item: {"task": str, "tool": str | None, "status": "pending"}
     """
@@ -101,7 +105,7 @@ def extract_checklist(brand_guide: str) -> dict[str, list[dict]]:
         ]
 
     total = sum(len(v) for v in checklist.values())
-    console.print(f"[dim]Extracted {total} tasks across 4 weeks from brand_guide.md[/dim]")
+    console.print(f"[dim]Extracted {total} tasks across 4 weeks from the generated brand guide[/dim]")
     return checklist
 
 
@@ -144,7 +148,7 @@ def build_system_prompt(brand_guide: str, week_label: str) -> str:
 You have full access to a web browser, a text editor, and a bash terminal.
 Your job is to complete the assigned task completely and verify success before finishing.
 
-## Brand context (from brand_guide.md)
+## Brand context (from the generated brand guide)
 
 {brand_guide}
 
@@ -342,12 +346,12 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
 def main() -> None:
     console.print(Panel(
         "[bold]Freelance Flow — Phase 2 Autonomous Executor[/bold]\n"
-        "[dim]Claude in Chrome · Anthropic API · brand_guide.md[/dim]",
+        "[dim]Claude in Chrome · Anthropic API · outputs/brand_guide.md[/dim]",
         style="cyan",
     ))
 
     # Load brand guide
-    console.print("\n[dim]Loading brand_guide.md...[/dim]")
+    console.print("\n[dim]Loading generated brand guide...[/dim]")
     brand_guide = load_brand_guide()
 
     # Resume from saved state or start fresh

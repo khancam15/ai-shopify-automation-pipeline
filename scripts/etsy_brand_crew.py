@@ -22,7 +22,6 @@ load_dotenv()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-NICHE = "Notion productivity templates for freelancers"   # <-- change this
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -34,6 +33,26 @@ search     = SerperDevTool(n_results=8)
 
 
 # ─── AGENTS ──────────────────────────────────────────────────────────────────
+
+niche_scout = Agent(
+    role="Etsy Niche Scout",
+    goal=(
+        "Identify the single highest-opportunity Etsy niche for a new digital "
+        "product store by analyzing market size, competition level, buyer intent, "
+        "and profit potential. Deliver one specific, actionable niche statement."
+    ),
+    backstory=(
+        "You have evaluated thousands of Etsy categories and know exactly which "
+        "niches are oversaturated, which are emerging, and which have durable "
+        "demand. You combine search trend data with review volume proxies to "
+        "surface niches where a new seller can realistically reach $1k/month "
+        "within 90 days selling digital products."
+    ),
+    tools=[search],
+    llm=MODEL,
+    verbose=True,
+    allow_delegation=False,
+)
 
 market_analyst = Agent(
     role="Etsy Market Research Analyst",
@@ -131,9 +150,40 @@ launch_planner = Agent(
 
 # ─── TASKS ───────────────────────────────────────────────────────────────────
 
+task_niche = Task(
+    description="""
+    Search Etsy and current trend data to identify the single best niche for a
+    new digital product store launching today.
+
+    Evaluate niches across these dimensions:
+    1. Demand signal — search volume, number of active listings, review velocity
+       on top sellers (reviews/month as a revenue proxy).
+    2. Competition gap — are the top 10 results dominated by a few large stores,
+       or is there room for a new entrant?
+    3. Digital product fit — can this niche be served with downloadable files
+       (templates, printables, planners, guides, presets, etc.)?
+    4. Buyer willingness to pay — average price point $5–$35, strong impulse-buy
+       characteristics.
+    5. Durability — not a passing trend; will still sell in 12 months.
+
+    Return ONE chosen niche as a single specific sentence
+    (e.g. "Notion productivity templates for freelancers" or
+    "Printable budget planners for newly married couples").
+    Label it clearly: CHOSEN NICHE: <niche statement>
+    """,
+    expected_output=(
+        "A short report showing evaluation of 3–5 candidate niches across the five "
+        "dimensions, followed by a clearly labelled CHOSEN NICHE statement."
+    ),
+    agent=niche_scout,
+)
+
 task_research = Task(
-    description=f"""
-    Conduct live market research on Etsy for the niche: "{NICHE}".
+    description="""
+    The niche to research has been chosen by the Niche Scout in the previous task.
+    Use that CHOSEN NICHE as the subject of all research below.
+
+    Conduct live market research on Etsy for that niche.
 
     Search for:
     1. Top 5 best-selling stores in this niche — note their store names, estimated
@@ -153,12 +203,13 @@ task_research = Task(
         "Positioning Gaps, and Visual Landscape."
     ),
     agent=market_analyst,
+    context=[task_niche],
 )
 
 task_strategy = Task(
-    description=f"""
-    Using the market research report, define the store foundation for a new
-    Etsy digital product store in the niche: "{NICHE}".
+    description="""
+    Using the market research report and the CHOSEN NICHE from the Niche Scout,
+    define the store foundation for a new Etsy digital product store in that niche.
 
     Deliver:
     1. Refined niche statement (one sentence, ultra-specific)
@@ -176,7 +227,7 @@ task_strategy = Task(
         "Positioning Statement, and Tone Adjectives."
     ),
     agent=brand_strategist,
-    context=[task_research],
+    context=[task_niche, task_research],
 )
 
 task_visual = Task(
@@ -270,6 +321,7 @@ task_launch = Task(
 
 brand_crew = Crew(
     agents=[
+        niche_scout,
         market_analyst,
         brand_strategist,
         visual_director,
@@ -277,6 +329,7 @@ brand_crew = Crew(
         launch_planner,
     ],
     tasks=[
+        task_niche,
         task_research,
         task_strategy,
         task_visual,
@@ -292,7 +345,7 @@ brand_crew = Crew(
 if __name__ == "__main__":
     print(f"\n{'─'*60}")
     print(f"  Etsy Brand Builder Crew")
-    print(f"  Niche: {NICHE}")
+    print(f"  Niche: AI-selected by Niche Scout agent")
     print(f"{'─'*60}\n")
 
     result = brand_crew.kickoff()

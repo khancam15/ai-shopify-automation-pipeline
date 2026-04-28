@@ -1,7 +1,7 @@
 """
 etsy_autonomous.py
 ──────────────────
-Phase 2 executor for Claude Chrome extension workflow.
+Phase 2 executor for claude-3-5-sonnet · computer use.
 Reads the generated brand guide, extracts the 30-day checklist, and generates
 ready-to-paste prompts for each launch task.
 
@@ -30,7 +30,7 @@ load_dotenv()
 console = Console()
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-MODEL      = "claude-haiku-4-5-20251001"
+MODEL      = "claude-3-5-sonnet-20241022"
 BRAND_FILES = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE = Path("outputs/executor_state.json")
 LOG_FILE   = Path("outputs/week_log.md")
@@ -183,8 +183,8 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     console.print(Panel(
-        "[bold]The Freelance Command Center — Launch Executor[/bold]\n"
-        "[dim]Claude Chrome extension workflow · outputs/brand_guide.md[/dim]",
+        "[bold]The Freelance Command Center — Autonomous Executor[/bold]\n"
+        "[dim]claude-3-5-sonnet · computer use · outputs/brand_guide.md[/dim]",
         style="cyan"
     ))
 

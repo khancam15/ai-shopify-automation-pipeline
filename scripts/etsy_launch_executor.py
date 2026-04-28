@@ -42,7 +42,7 @@ load_dotenv()
 console = Console()
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-MODEL          = "claude-opus-4-6"
+MODEL          = "claude-haiku-4-5-20251001"  # prompt-generation model (fast, cost-efficient)
 BRAND_GUIDES   = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE     = Path("outputs/executor_state.json")
 OUTPUTS_DIR    = Path("outputs")
@@ -151,25 +151,6 @@ def append_master_prompt(week_label: str, task_number: int, task_text: str, prom
 
 # ─── STEP 4 — SINGLE-TASK EXECUTOR ───────────────────────────────────────────
 
-COMPUTER_USE_TOOLS = [
-    {
-        "type": "computer_20250124",
-        "name": "computer",
-        "display_width_px": 1280,
-        "display_height_px": 800,
-        "display_number": 1,
-    },
-    {
-        "type": "text_editor_20250429",
-        "name": "str_replace_based_edit_tool",
-    },
-    {
-        "type": "bash_20250124",
-        "name": "bash",
-    },
-]
-
-
 def build_system_prompt(brand_guide: str, week_label: str) -> str:
     return f"""You are an autonomous Etsy store launch agent for the brand "Freelance Flow".
 
@@ -207,7 +188,7 @@ def execute_task(
     week_key: str,
 ) -> str:
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model=MODEL,
         max_tokens=1000,
         system=f"""You are an Etsy launch assistant for The Freelance Command Center.
 Brand guide context:

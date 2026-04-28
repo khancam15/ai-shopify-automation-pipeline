@@ -39,8 +39,16 @@ from rich import print as rprint
 
 load_dotenv()
 
+
+def _require_env(key: str) -> str:
+    value = os.getenv(key)
+    if not value:
+        raise SystemExit(f"[error] {key} is not set. Add it to your .env file.")
+    return value
+
+
 console = Console()
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+client = anthropic.Anthropic(api_key=_require_env("ANTHROPIC_API_KEY"))
 
 MODEL          = "claude-haiku-4-5-20251001"  # prompt-generation model (fast, cost-efficient)
 BRAND_GUIDES   = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))

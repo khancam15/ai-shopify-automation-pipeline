@@ -17,7 +17,6 @@ import os
 import json
 import time
 import re
-import hashlib
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -56,10 +55,10 @@ def load_brand_guide() -> str:
 # ── Extract checklist ─────────────────────────────────────────────────────────
 def extract_checklist(guide: str) -> dict:
     patterns = {
-        "week_1": r"(?:###\s*)?Week 1.*?(?=(?:###\s*)?Week 2|$)",
-        "week_2": r"(?:###\s*)?Week 2.*?(?=(?:###\s*)?Week 3|$)",
-        "week_3": r"(?:###\s*)?Week 3.*?(?=(?:###\s*)?Week 4|$)",
-        "week_4": r"(?:###\s*)?Week 4.*?(?=$)",
+        "week_1": r"### Week 1.*?(?=### Week 2|$)",
+        "week_2": r"### Week 2.*?(?=### Week 3|$)",
+        "week_3": r"### Week 3.*?(?=### Week 4|$)",
+        "week_4": r"### Week 4.*?(?=$)",
     }
     checklist = {}
     for key, pattern in patterns.items():
@@ -184,28 +183,21 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     console.print(Panel(
-        "[bold]Etsy Launch Executor[/bold]\n"
+        "[bold]The Freelance Command Center — Launch Executor[/bold]\n"
         "[dim]Claude Chrome extension workflow · outputs/brand_guide.md[/dim]",
         style="cyan"
     ))
 
     guide = load_brand_guide()
-    brand_hash = hashlib.sha256(guide.encode("utf-8")).hexdigest()
 
     state = load_state()
-    if state and state.get("brand_hash") == brand_hash:
+    if state:
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
             initialize_master_prompt_file()
     else:
-        if state and state.get("brand_hash") != brand_hash:
-            console.print("[yellow]Brand guide changed — starting a fresh execution state.[/yellow]")
         checklist = extract_checklist(guide)
-        state = {
-            "started_at": datetime.now().isoformat(),
-            "brand_hash": brand_hash,
-            "checklist": checklist,
-        }
+        state = {"started_at": datetime.now().isoformat(), "checklist": checklist}
         save_state(state)
         initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")

@@ -34,3 +34,5 @@ history_list.txt
 
 # Scripts cache (never commit compiled bytecode)
 scripts/__pycache__/
+executor_state.json
+history_list.txt

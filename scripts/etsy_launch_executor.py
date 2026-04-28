@@ -28,7 +28,6 @@ import os
 import re
 import json
 import time
-import hashlib
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -77,10 +76,10 @@ def extract_checklist(brand_guide: str) -> dict[str, list[dict]]:
     Each item: {"task": str, "tool": str | None, "status": "pending"}
     """
     week_patterns = {
-        "week_1": r"(?:###\s*)?Week 1.*?(?=(?:###\s*)?Week 2|$)",
-        "week_2": r"(?:###\s*)?Week 2.*?(?=(?:###\s*)?Week 3|$)",
-        "week_3": r"(?:###\s*)?Week 3.*?(?=(?:###\s*)?Week 4|$)",
-        "week_4": r"(?:###\s*)?Week 4.*?(?=$)",
+        "week_1": r"Week 1.*?(?=Week 2|$)",
+        "week_2": r"Week 2.*?(?=Week 3|$)",
+        "week_3": r"Week 3.*?(?=Week 4|$)",
+        "week_4": r"Week 4.*?(?=$)",
     }
 
     checklist: dict[str, list[dict]] = {}
@@ -152,15 +151,65 @@ def append_master_prompt(week_label: str, task_number: int, task_text: str, prom
 
 # ─── STEP 4 — SINGLE-TASK EXECUTOR ───────────────────────────────────────────
 
+COMPUTER_USE_TOOLS = [
+    {
+        "type": "computer_20250124",
+        "name": "computer",
+        "display_width_px": 1280,
+        "display_height_px": 800,
+        "display_number": 1,
+    },
+    {
+        "type": "text_editor_20250429",
+        "name": "str_replace_based_edit_tool",
+    },
+    {
+        "type": "bash_20250124",
+        "name": "bash",
+    },
+]
+
+
+def build_system_prompt(brand_guide: str, week_label: str) -> str:
+    return f"""You are an autonomous Etsy store launch agent for the brand "Freelance Flow".
+
+You have full access to a web browser, a text editor, and a bash terminal.
+Your job is to complete the assigned task completely and verify success before finishing.
+
+## Brand context (from the generated brand guide)
+
+{brand_guide}
+
+## Operating rules
+- You are executing Week: {week_label}
+- Use Claude in Chrome to navigate to the correct platform for each task.
+- For Canva tasks: go to canva.com, select the relevant template, apply brand colors
+  (#B2E0D4 mint, #FFBFA0 peach, #406E8E slate, #F6F5F0 cream, #333333 charcoal),
+  use Poppins for headings and Roboto for body text.
+- For Etsy tasks: go to etsy.com/your/shops/me/tools and log in if prompted.
+  Wait for explicit user confirmation before clicking any purchase or publish button.
+- For Pinterest/Instagram tasks: open the platform and create content using brand copy
+  extracted directly from the brand guide above.
+- After completing each task, briefly confirm what was done and what URL or file was produced.
+- If you encounter a CAPTCHA or 2FA prompt, pause and inform the user.
+- Never enter payment details, passwords, or personal credentials. Ask the user.
+- Log every completed action to: outputs/week_log.md
+
+## Task format
+You will receive one task at a time. Complete it fully before returning.
+"""
+
+
 def execute_task(
     task_text: str,
     brand_guide: str,
     week_label: str,
+    week_key: str,
 ) -> str:
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1000,
-        system=f"""You are an Etsy launch assistant.
+        system=f"""You are an Etsy launch assistant for The Freelance Command Center.
 Brand guide context:
 {brand_guide[:2000]}
 Generate a clear step-by-step prompt the user pastes into Claude in Chrome to complete this task.""",
@@ -217,6 +266,7 @@ def run_weekly_agent(
                 task_text=f"Complete this task now: {item['task']}",
                 brand_guide=brand_guide,
                 week_label=label,
+                week_key=week_key,
             )
 
         append_master_prompt(
@@ -253,7 +303,7 @@ def run_weekly_agent(
 # ─── STEP 6 — WEEK 4 FEEDBACK LOOP ────────────────────────────────────────────
 
 FEEDBACK_PROMPT = """
-You are the Week 4 optimization agent for this Etsy brand.
+You are the Week 4 optimization agent for Freelance Flow on Etsy.
 
 Using the browser, navigate to your Etsy Stats dashboard at:
   https://www.etsy.com/your/shops/me/stats
@@ -287,6 +337,7 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
         task_text=FEEDBACK_PROMPT,
         brand_guide=brand_guide,
         week_label="Week 4 — Optimization",
+        week_key="week_4",
     )
 
     # Parse the JSON block from Claude's response
@@ -329,7 +380,7 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
 
 def main() -> None:
     console.print(Panel(
-        "[bold]Etsy Launch Executor — Phase 2[/bold]\n"
+        "[bold]Freelance Flow — Phase 2 Autonomous Executor[/bold]\n"
         "[dim]Claude in Chrome · Anthropic API · outputs/brand_guide.md[/dim]",
         style="cyan",
     ))
@@ -337,21 +388,17 @@ def main() -> None:
     # Load brand guide
     console.print("\n[dim]Loading generated brand guide...[/dim]")
     brand_guide = load_brand_guide()
-    brand_hash = hashlib.sha256(brand_guide.encode("utf-8")).hexdigest()
 
     # Resume from saved state or start fresh
     state = load_state()
-    if state and state.get("brand_hash") == brand_hash:
+    if state:
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
             initialize_master_prompt_file()
     else:
-        if state and state.get("brand_hash") != brand_hash:
-            console.print("[yellow]Brand guide changed — starting a fresh execution state.[/yellow]")
         checklist = extract_checklist(brand_guide)
         state = {
             "started_at": datetime.now().isoformat(),
-            "brand_hash": brand_hash,
             "checklist":  checklist,
             "feedback":   None,
         }

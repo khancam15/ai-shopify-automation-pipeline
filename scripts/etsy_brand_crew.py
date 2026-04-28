@@ -22,7 +22,7 @@ load_dotenv()
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-NICHE = os.getenv("ETSY_NICHE", "Notion productivity templates for freelancers")
+NICHE = "Notion productivity templates for freelancers"   # <-- change this
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 

@@ -77,10 +77,10 @@ def extract_checklist(brand_guide: str) -> dict[str, list[dict]]:
     Each item: {"task": str, "tool": str | None, "status": "pending"}
     """
     week_patterns = {
-        "week_1": r"Week 1.*?(?=Week 2|$)",
-        "week_2": r"Week 2.*?(?=Week 3|$)",
-        "week_3": r"Week 3.*?(?=Week 4|$)",
-        "week_4": r"Week 4.*?(?=$)",
+        "week_1": r"(?:###\s*)?Week 1.*?(?=(?:###\s*)?Week 2|$)",
+        "week_2": r"(?:###\s*)?Week 2.*?(?=(?:###\s*)?Week 3|$)",
+        "week_3": r"(?:###\s*)?Week 3.*?(?=(?:###\s*)?Week 4|$)",
+        "week_4": r"(?:###\s*)?Week 4.*?(?=$)",
     }
 
     checklist: dict[str, list[dict]] = {}
@@ -152,60 +152,10 @@ def append_master_prompt(week_label: str, task_number: int, task_text: str, prom
 
 # ─── STEP 4 — SINGLE-TASK EXECUTOR ───────────────────────────────────────────
 
-COMPUTER_USE_TOOLS = [
-    {
-        "type": "computer_20250124",
-        "name": "computer",
-        "display_width_px": 1280,
-        "display_height_px": 800,
-        "display_number": 1,
-    },
-    {
-        "type": "text_editor_20250429",
-        "name": "str_replace_based_edit_tool",
-    },
-    {
-        "type": "bash_20250124",
-        "name": "bash",
-    },
-]
-
-
-def build_system_prompt(brand_guide: str, week_label: str) -> str:
-    return f"""You are an autonomous Etsy store launch agent.
-
-You have full access to a web browser, a text editor, and a bash terminal.
-Your job is to complete the assigned task completely and verify success before finishing.
-
-## Brand context (from the generated brand guide)
-
-{brand_guide}
-
-## Operating rules
-- You are executing Week: {week_label}
-- Use Claude in Chrome to navigate to the correct platform for each task.
-- For Canva tasks: go to canva.com, select the relevant template, apply brand colors
-  (#B2E0D4 mint, #FFBFA0 peach, #406E8E slate, #F6F5F0 cream, #333333 charcoal),
-  use Poppins for headings and Roboto for body text.
-- For Etsy tasks: go to etsy.com/your/shops/me/tools and log in if prompted.
-  Wait for explicit user confirmation before clicking any purchase or publish button.
-- For Pinterest/Instagram tasks: open the platform and create content using brand copy
-  extracted directly from the brand guide above.
-- After completing each task, briefly confirm what was done and what URL or file was produced.
-- If you encounter a CAPTCHA or 2FA prompt, pause and inform the user.
-- Never enter payment details, passwords, or personal credentials. Ask the user.
-- Log every completed action to: outputs/week_log.md
-
-## Task format
-You will receive one task at a time. Complete it fully before returning.
-"""
-
-
 def execute_task(
     task_text: str,
     brand_guide: str,
     week_label: str,
-    week_key: str,
 ) -> str:
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -267,7 +217,6 @@ def run_weekly_agent(
                 task_text=f"Complete this task now: {item['task']}",
                 brand_guide=brand_guide,
                 week_label=label,
-                week_key=week_key,
             )
 
         append_master_prompt(
@@ -338,7 +287,6 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
         task_text=FEEDBACK_PROMPT,
         brand_guide=brand_guide,
         week_label="Week 4 — Optimization",
-        week_key="week_4",
     )
 
     # Parse the JSON block from Claude's response

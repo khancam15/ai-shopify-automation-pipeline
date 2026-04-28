@@ -56,10 +56,10 @@ def load_brand_guide() -> str:
 # ── Extract checklist ─────────────────────────────────────────────────────────
 def extract_checklist(guide: str) -> dict:
     patterns = {
-        "week_1": r"### Week 1.*?(?=### Week 2|$)",
-        "week_2": r"### Week 2.*?(?=### Week 3|$)",
-        "week_3": r"### Week 3.*?(?=### Week 4|$)",
-        "week_4": r"### Week 4.*?(?=$)",
+        "week_1": r"(?:###\s*)?Week 1.*?(?=(?:###\s*)?Week 2|$)",
+        "week_2": r"(?:###\s*)?Week 2.*?(?=(?:###\s*)?Week 3|$)",
+        "week_3": r"(?:###\s*)?Week 3.*?(?=(?:###\s*)?Week 4|$)",
+        "week_4": r"(?:###\s*)?Week 4.*?(?=$)",
     }
     checklist = {}
     for key, pattern in patterns.items():

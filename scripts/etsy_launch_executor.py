@@ -28,6 +28,7 @@ import os
 import re
 import json
 import time
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -171,7 +172,7 @@ COMPUTER_USE_TOOLS = [
 
 
 def build_system_prompt(brand_guide: str, week_label: str) -> str:
-    return f"""You are an autonomous Etsy store launch agent for the brand "Freelance Flow".
+    return f"""You are an autonomous Etsy store launch agent.
 
 You have full access to a web browser, a text editor, and a bash terminal.
 Your job is to complete the assigned task completely and verify success before finishing.
@@ -209,7 +210,7 @@ def execute_task(
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1000,
-        system=f"""You are an Etsy launch assistant for The Freelance Command Center.
+        system=f"""You are an Etsy launch assistant.
 Brand guide context:
 {brand_guide[:2000]}
 Generate a clear step-by-step prompt the user pastes into Claude in Chrome to complete this task.""",
@@ -303,7 +304,7 @@ def run_weekly_agent(
 # ─── STEP 6 — WEEK 4 FEEDBACK LOOP ────────────────────────────────────────────
 
 FEEDBACK_PROMPT = """
-You are the Week 4 optimization agent for Freelance Flow on Etsy.
+You are the Week 4 optimization agent for this Etsy brand.
 
 Using the browser, navigate to your Etsy Stats dashboard at:
   https://www.etsy.com/your/shops/me/stats
@@ -380,7 +381,7 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
 
 def main() -> None:
     console.print(Panel(
-        "[bold]Freelance Flow — Phase 2 Autonomous Executor[/bold]\n"
+        "[bold]Etsy Launch Executor — Phase 2[/bold]\n"
         "[dim]Claude in Chrome · Anthropic API · outputs/brand_guide.md[/dim]",
         style="cyan",
     ))
@@ -388,17 +389,21 @@ def main() -> None:
     # Load brand guide
     console.print("\n[dim]Loading generated brand guide...[/dim]")
     brand_guide = load_brand_guide()
+    brand_hash = hashlib.sha256(brand_guide.encode("utf-8")).hexdigest()
 
     # Resume from saved state or start fresh
     state = load_state()
-    if state:
+    if state and state.get("brand_hash") == brand_hash:
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
             initialize_master_prompt_file()
     else:
+        if state and state.get("brand_hash") != brand_hash:
+            console.print("[yellow]Brand guide changed — starting a fresh execution state.[/yellow]")
         checklist = extract_checklist(brand_guide)
         state = {
             "started_at": datetime.now().isoformat(),
+            "brand_hash": brand_hash,
             "checklist":  checklist,
             "feedback":   None,
         }

@@ -63,7 +63,7 @@ ai-etsy-product-pipeline/
 > **Store:** The Freelance Command Center  
 > **Positioning:** Unified Notion templates helping independent freelancers track income, manage clients, and prepare taxes.
 
-To run on a different niche, change the `NICHE` constant at the top of `scripts/etsy_brand_crew.py`.
+To run on a different niche, set `ETSY_NICHE` in your `.env` file before running Phase 1.
 
 ---
 
@@ -97,7 +97,7 @@ pip install pre-commit
 
 # 4. Configure credentials
 cp .env.example .env
-# Edit .env and fill in your ANTHROPIC_API_KEY and SERPER_API_KEY
+# Edit .env and fill in ANTHROPIC_API_KEY, SERPER_API_KEY, and ETSY_NICHE
 
 # 5. Enable secret scanning (blocks accidental key commits)
 pre-commit install

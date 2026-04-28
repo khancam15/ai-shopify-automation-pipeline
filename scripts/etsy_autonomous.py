@@ -17,6 +17,7 @@ import os
 import json
 import time
 import re
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -183,21 +184,28 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     console.print(Panel(
-        "[bold]The Freelance Command Center — Launch Executor[/bold]\n"
+        "[bold]Etsy Launch Executor[/bold]\n"
         "[dim]Claude Chrome extension workflow · outputs/brand_guide.md[/dim]",
         style="cyan"
     ))
 
     guide = load_brand_guide()
+    brand_hash = hashlib.sha256(guide.encode("utf-8")).hexdigest()
 
     state = load_state()
-    if state:
+    if state and state.get("brand_hash") == brand_hash:
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
             initialize_master_prompt_file()
     else:
+        if state and state.get("brand_hash") != brand_hash:
+            console.print("[yellow]Brand guide changed — starting a fresh execution state.[/yellow]")
         checklist = extract_checklist(guide)
-        state = {"started_at": datetime.now().isoformat(), "checklist": checklist}
+        state = {
+            "started_at": datetime.now().isoformat(),
+            "brand_hash": brand_hash,
+            "checklist": checklist,
+        }
         save_state(state)
         initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")

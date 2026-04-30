@@ -8,7 +8,7 @@ Requires:
     pip install crewai crewai-tools
     ANTHROPIC_API_KEY and SERPER_API_KEY in your .env
 
-The crew performs a full 5-tier Etsy brand build driven by live
+The crew performs a full 6-agent Etsy brand build driven by live
 market research. A final brand_guide.md is written to ./outputs/.
 """
 
@@ -19,6 +19,17 @@ from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool
 
 load_dotenv()
+
+
+def _require_env(key: str) -> str:
+    value = os.getenv(key)
+    if not value:
+        raise SystemExit(f"[error] {key} is not set. Add it to your .env file.")
+    return value
+
+
+_require_env("ANTHROPIC_API_KEY")
+_require_env("SERPER_API_KEY")
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 

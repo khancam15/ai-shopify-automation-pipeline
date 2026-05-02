@@ -31,7 +31,8 @@ mkdir -p \
     03_Canva_Exports \
     "04_Assets/ReadyToUpload" \
     "04_Assets/Archived" \
-    outputs
+    outputs \
+    logs
 echo "      Done."
 
 # 2 — .env
@@ -81,6 +82,7 @@ echo "      Done."
 # 7 — Executable bits
 echo "[7/7] Setting executable permissions..."
 chmod +x "$SCRIPT_DIR/run.sh"
+chmod +x "$SCRIPT_DIR/loop.sh"
 chmod +x "$SCRIPT_DIR/setup_vps.sh"
 echo "      Done."
 
@@ -90,10 +92,17 @@ echo "  Setup complete."
 echo ""
 echo "  Next steps:"
 echo "  1. Edit .env and fill in all API keys"
-echo "  2. Log into Etsy in the Playwright profile:"
-echo "       ./run.sh phase5-login  (see docs)"
-echo "  3. Run the brand builder:"
-echo "       ./run.sh phase1"
-echo "  4. Run the launch executor:"
-echo "       ./run.sh phase2"
+echo "     nano .env"
+echo ""
+echo "  2. Log into Etsy once (saves session for headless runs):"
+echo "     python scripts/etsy_login.py"
+echo ""
+echo "  3. Install the systemd service so the loop survives reboots:"
+echo "     cp etsy-pipeline.service /etc/systemd/system/"
+echo "     systemctl daemon-reload"
+echo "     systemctl enable etsy-pipeline"
+echo "     systemctl start etsy-pipeline"
+echo ""
+echo "  4. Check it's running:"
+echo "     systemctl status etsy-pipeline"
 echo "========================================"

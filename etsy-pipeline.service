@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Etsy Product Pipeline — autonomous loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ai-etsy-product-pipeline
+ExecStart=/root/ai-etsy-product-pipeline/loop.sh
+Restart=on-failure
+RestartSec=60
+StandardOutput=append:/root/ai-etsy-product-pipeline/logs/loop.log
+StandardError=append:/root/ai-etsy-product-pipeline/logs/loop_errors.log
+
+[Install]
+WantedBy=multi-user.target

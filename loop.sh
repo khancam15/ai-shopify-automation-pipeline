@@ -101,10 +101,20 @@ _log "Logs: $LOG_FILE"
 _log "========================================"
 
 CYCLE=0
+LAST_DIGEST_DATE=""
 
 while true; do
     CYCLE=$((CYCLE + 1))
     _log "──────── CYCLE $CYCLE START ────────"
+
+    # ── Daily email digest ────────────────────────────────────────────────────
+    # Sends once per calendar day regardless of how many cycles run.
+    TODAY=$(date -u '+%Y-%m-%d')
+    if [[ "$TODAY" != "$LAST_DIGEST_DATE" ]]; then
+        _run_phase "Email digest" "$PYTHON" scripts/email_digest.py \
+            || _err "Email digest failed — non-fatal."
+        LAST_DIGEST_DATE="$TODAY"
+    fi
 
     # ── Phase 1: Brand Builder ────────────────────────────────────────────────
     # Only regenerates brand_guide.md if it's older than 7 days, to avoid

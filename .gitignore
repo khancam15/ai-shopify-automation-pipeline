@@ -36,6 +36,9 @@ logs/*
 executor_state.json
 history_list.txt
 
+# Playwright browser session — contains live Etsy login, never commit
+.playwright_profile/
+
 # Scripts cache (never commit compiled bytecode)
 scripts/__pycache__/
 executor_state.json

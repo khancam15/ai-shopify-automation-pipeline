@@ -5,7 +5,8 @@ Reads a queue row from SQLite and formats all fields into a structured
 JSON payload that Playwright and the validator consume downstream.
 
 Run:
-    python scripts/listing_builder.py <queue_id>
+    python scripts/listing_builder.py <product_name>   — uses newest pending row
+    python scripts/listing_builder.py <queue_id>       — uses exact row by ID
 
 Output:
     04_Assets/ReadyToUpload/[ProductName]/listing.json
@@ -63,13 +64,29 @@ def build_listing_payload(queue_id: int) -> dict:
     return payload
 
 
+def _resolve_queue_id(arg: str) -> int:
+    """Accept either a numeric queue_id or a product_name string."""
+    if arg.isdigit():
+        return int(arg)
+    # Look up the most recent pending row for this product name
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM queue WHERE product_name = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+            (arg,),
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"No pending queue item found for product: {arg}")
+    return row["id"]
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2 or not sys.argv[1].isdigit():
-        print("Usage: python scripts/listing_builder.py <queue_id>")
+    if len(sys.argv) != 2:
+        print("Usage: python scripts/listing_builder.py <product_name|queue_id>")
         sys.exit(1)
 
     try:
-        p = build_listing_payload(int(sys.argv[1]))
+        qid = _resolve_queue_id(sys.argv[1])
+        p = build_listing_payload(qid)
         print(f"\n  Done — payload for: {p['product_name']}")
     except ValueError as e:
         print(f"[error] {e}")

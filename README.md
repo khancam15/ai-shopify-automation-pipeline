@@ -1,16 +1,25 @@
 # AI Etsy Product Pipeline
 
-An end-to-end AI-powered pipeline that researches a niche, builds a full brand identity, and executes a 30-day Etsy store launch through the Claude Chrome extension workflow.
+An end-to-end AI-powered pipeline that researches a niche, builds a full brand identity, processes product mockups, uploads listings to Etsy via headless Chromium, and runs daily SEO and health monitoring — fully autonomous on a VPS.
 
 ---
 
-## What It Does
+## Pipeline Overview
 
 | Phase | Script | What happens |
 |-------|--------|-------------|
-| **1 — Brand Build** | `scripts/etsy_brand_crew.py` | A 5-agent CrewAI crew runs live market research (via Serper), defines brand strategy, visual identity, SEO copy, and writes a complete `outputs/brand_guide.md` |
-| **2 — Launch Execution** | `scripts/etsy_launch_executor.py` | Reads `outputs/brand_guide.md`, extracts the 30-day checklist, and appends weekly Claude Chrome extension prompts into `outputs/master.txt` |
-| **2 (alt) — Extension Prompt Engine** | `scripts/etsy_autonomous.py` | Generates richer weekly prompts and checklists in `outputs/master.txt` for Claude Chrome extension execution |
+| **0 — VPS Setup** | `setup_vps.sh` | One-time bootstrap: creates directories, installs venv, Playwright Chromium, and initialises the database |
+| **Foundation** | `scripts/db.py` | Initialises SQLite with 4 tables: `queue`, `listings`, `run_log`, `seo_review` |
+| **1 — Brand Build** | `scripts/etsy_brand_crew.py` | 6-agent CrewAI crew runs live market research (Serper), builds brand strategy, visual identity, SEO copy → `outputs/brand_guide.md` |
+| **2 — Launch Executor** | `scripts/etsy_launch_executor.py` | Reads brand guide, extracts 30-day checklist, writes weekly Claude prompts → `outputs/master.txt` |
+| **2 (alt) — Autonomous Engine** | `scripts/etsy_autonomous.py` | Richer prompt engine with completion checklists for Claude Chrome extension execution |
+| **4.1 — Image Processor** | `scripts/image_processor.py` | Resizes mockup images to 2000×2000 JPEG at quality 92 |
+| **4.2 — Listing Builder** | `scripts/listing_builder.py` | Reads queue row from SQLite, assembles `listing.json` payload |
+| **4.3 — Validator** | `scripts/pre_upload_validator.py` | Validates title ≤140 chars, exactly 13 tags, price range, ≥5 mockups — exits 0/1 for n8n routing |
+| **4.5 — File Organizer** | `scripts/file_organizer.py` | Stages files to `04_Assets/ReadyToUpload/`, archives after publish |
+| **5 — Etsy Uploader** | `scripts/etsy_uploader.py` | Playwright headless Chromium fills and submits listing to Etsy Seller Dashboard, captures listing URL |
+| **6 — SEO Analyzer** | `scripts/seo_analyzer.py` | Calls Etsy API for published tags, fetches top 5 competitor listings, writes gap report to SQLite |
+| **7 — Health Dashboard** | `scripts/health_dashboard.py` | Daily health report: published count, failure rate, stuck queue items — stdout captured by n8n |
 
 ---
 
@@ -19,121 +28,145 @@ An end-to-end AI-powered pipeline that researches a niche, builds a full brand i
 ```
 ai-etsy-product-pipeline/
 │
-│   # ── Dotfiles (tool config, ignored by default in most editors) ──
-├── .env.example              # Safe credentials template — copy to .env, never commit .env
-├── .gitignore                # Blocks secrets, bytecache, venv, and runtime outputs
-├── .pre-commit-config.yaml   # Runs gitleaks on every commit to catch leaked secrets
+├── .env.example              # Credentials template — copy to .env, never commit .env
+├── .gitignore
+├── .pre-commit-config.yaml   # gitleaks secret scan on every commit
+├── run.sh                    # VPS entry point for all phases
+├── setup_vps.sh              # One-time VPS bootstrap script
+├── requirements.txt
+├── pyproject.toml
 │
-│   # ── Root files (alphabetical) ──
-├── LICENSE                   # MIT open-source license
-├── README.md                 # Project overview, setup, and usage docs
-├── pyproject.toml            # Package metadata and Python tooling config (ruff, etc.)
-├── requirements.txt          # Pinned runtime dependencies for pip install
-│
-│   # ── config/ — Project-level tool configuration ──
 ├── config/
-│   └── .gitleaks.toml        # Gitleaks secret-scan allowlist for safe placeholders
+│   └── .gitleaks.toml
 │
-│   # ── prompts/ — Tracked prompt templates ──
 ├── prompts/
-│   └── master.txt            # 20-task master launch prompt — copy of the Claude Chrome
-│                             # extension input used to execute the 30-day Etsy launch
+│   └── master.txt            # Tracked master launch prompt template
 │
-│   # ── scripts/ — Executable pipeline scripts (run in phase order) ──
 ├── scripts/
-│   ├── etsy_brand_crew.py      # Phase 1 — CrewAI 5-agent brand builder → outputs/brand_guide.md
-│   ├── etsy_launch_executor.py # Phase 2 — Reads brand guide, writes outputs/master.txt prompts
-│   └── etsy_autonomous.py      # Phase 2 alt — Richer prompt engine for Claude Chrome extension
+│   ├── db.py                   # SQLite schema + all DB helpers
+│   ├── etsy_brand_crew.py      # Phase 1 — CrewAI brand builder
+│   ├── etsy_launch_executor.py # Phase 2 — Launch prompt executor
+│   ├── etsy_autonomous.py      # Phase 2 alt — Autonomous prompt engine
+│   ├── image_processor.py      # Phase 4.1 — Mockup resize to 2000×2000 JPEG
+│   ├── listing_builder.py      # Phase 4.2 — Build listing.json from queue
+│   ├── pre_upload_validator.py # Phase 4.3 — Pre-upload validation
+│   ├── file_organizer.py       # Phase 4.5 — Stage and archive files
+│   ├── etsy_uploader.py        # Phase 5 — Playwright headless uploader
+│   ├── seo_analyzer.py         # Phase 6 — Post-publish SEO gap analysis
+│   └── health_dashboard.py     # Phase 7 — Daily health report
 │
-│   # ── outputs/ — Runtime-generated files (git-ignored except .gitkeep) ──
-└── outputs/
-    ├── .gitkeep              # Preserves this folder on fresh clone (contents are git-ignored)
-    ├── brand_guide.md        # Generated by Phase 1 — full brand strategy document
-    ├── master.txt            # Generated at runtime from prompts/master.txt
-    ├── week_log.md           # Task-by-task execution log
-    ├── feedback_report.md    # Week 4 Etsy Stats tag performance report
-    └── executor_state.json   # Resumable run state (tracks completed tasks)
+├── 01_Queue/                 # Incoming product queue (CSV or manual)
+├── 02_Products/              # Product source files and mockups
+│   └── [ProductName]/
+│       └── Mockups/          # Raw mockup images (PNG/JPG/WEBP)
+├── 03_Canva_Exports/         # Canva design exports before processing
+├── 04_Assets/
+│   ├── ReadyToUpload/        # Staged files awaiting Playwright upload
+│   │   └── [ProductName]/
+│   │       ├── listing.json
+│   │       └── *.jpg
+│   └── Archived/             # Published listings moved here post-upload
+│
+└── outputs/                  # Runtime-generated files (git-ignored)
+    ├── brand_guide.md
+    ├── master.txt
+    ├── week_log.md
+    ├── executor_state.json
+    └── cron.log
 ```
-
----
-
-## Niche & Brand (default config)
-
-> **Niche:** Notion productivity templates for freelancers  
-> **Store:** The Freelance Command Center  
-> **Positioning:** Unified Notion templates helping independent freelancers track income, manage clients, and prepare taxes.
-
-To run on a different niche, change the `NICHE` constant at the top of `scripts/etsy_brand_crew.py`.
 
 ---
 
 ## Requirements
 
-- Python 3.11+
-- An [Anthropic API key](https://platform.claude.com/settings/keys)
-- A [Serper API key](https://serper.dev) (for live market research in Phase 1)
+- Python 3.12+
+- [Anthropic API key](https://platform.claude.com/settings/keys)
+- [Serper API key](https://serper.dev) — live market research in Phase 1
+- [Etsy API key](https://www.etsy.com/developers) — SEO analysis in Phase 6
+
+---
+
+## VPS Deployment (Hostinger KVM 2)
+
+### First-time setup
 
 ```bash
-pip install -r requirements.txt
-pip install pre-commit
+git clone https://github.com/khancam15/ai-etsy-product-pipeline.git
+cd ai-etsy-product-pipeline
+chmod +x setup_vps.sh && ./setup_vps.sh
+```
+
+Then fill in your API keys:
+
+```bash
+nano .env
+```
+
+```
+ANTHROPIC_API_KEY=your_key_here
+SERPER_API_KEY=your_key_here
+ETSY_API_KEY=your_key_here
+```
+
+### Run the pipeline
+
+```bash
+./run.sh db-init                     # initialise database (once)
+./run.sh phase1                      # brand builder
+./run.sh phase2                      # launch executor
+./run.sh phase4 "ProductName"        # process images → build listing → validate → stage
+./run.sh phase5 "ProductName"        # upload to Etsy
+./run.sh phase6 "ProductName"        # SEO gap analysis
+./run.sh phase7                      # health dashboard
+./run.sh full   "ProductName"        # phases 4 → 5 → 6 in one command
+```
+
+### Pulling updates to VPS
+
+```bash
+cd /root/ai-etsy-product-pipeline
+git pull origin main
+```
+
+### Cron examples
+
+```bash
+# Daily health check at 8am
+0 8 * * * /root/ai-etsy-product-pipeline/run.sh phase7 >> /root/ai-etsy-product-pipeline/outputs/cron.log 2>&1
+
+# Phase 2 daily at 6am
+0 6 * * * /root/ai-etsy-product-pipeline/run.sh phase2 >> /root/ai-etsy-product-pipeline/outputs/cron.log 2>&1
 ```
 
 ---
 
-## Setup
+## Local Development Setup
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/khancam15/ai-etsy-product-pipeline.git
 cd ai-etsy-product-pipeline
 
-# 2. Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate
 
-# 3. Install dependencies
 pip install -r requirements.txt
 pip install pre-commit
-
-# 4. Configure credentials
-cp .env.example .env
-# Edit .env and fill in your ANTHROPIC_API_KEY and SERPER_API_KEY
-
-# 5. Enable secret scanning (blocks accidental key commits)
 pre-commit install
+
+cp .env.example .env
+# fill in your API keys
 ```
 
 ---
 
-## Usage
+## Database Schema
 
-### Phase 1 — Generate Brand Guide
-
-```bash
-python scripts/etsy_brand_crew.py
-```
-
-Runs live research and writes `outputs/brand_guide.md`. Takes ~3–8 minutes depending on API speed.
-
-### Phase 2 — Execute Launch (prompt-assisted)
-
-```bash
-python scripts/etsy_launch_executor.py
-```
-
-Reads `outputs/brand_guide.md` and appends a weekly execution prompt for each task.
-Use `prompts/master.txt` as your tracked source template and `outputs/master.txt` as the runtime file in Claude Chrome extension.
-
-### Phase 2 (alt) — Execute Launch (fully autonomous)
-
-```bash
-python scripts/etsy_autonomous.py
-```
-
-Generates expanded prompts and completion checklists for pasting into the Claude Chrome extension.
-Like the main launcher, it seeds from `prompts/master.txt` and writes execution-ready content into `outputs/master.txt`.
-
-> **Safety note:** Launch prompts enforce no Publish or Purchase action without explicit user confirmation.
+| Table | Purpose |
+|-------|---------|
+| `queue` | Products waiting to be processed — status: `pending → designed → published / failed` |
+| `listings` | Published Etsy listings with URL and timestamp |
+| `run_log` | Per-phase execution log with status, message, and timing |
+| `seo_review` | Post-publish SEO gap reports: missing tags vs competitors |
 
 ---
 
@@ -141,11 +174,11 @@ Like the main launcher, it seeds from `prompts/master.txt` and writes execution-
 
 | Protection | How |
 |-----------|-----|
-| API keys never committed | `.env` and `.env.*` are git-ignored; only `.env.example` is tracked |
-| Secret scanning on every commit | `gitleaks` runs via pre-commit hook, config in `config/.gitleaks.toml` |
-| Runtime outputs git-ignored | `outputs/*` ignored except `outputs/.gitkeep`; no generated data in git |
-| Env template provided | `.env.example` contains only placeholder values, never real credentials |
-| Bytecode excluded | `__pycache__/` and `*.pyc` blocked by `.gitignore` |
+| API keys never committed | `.env` is git-ignored; only `.env.example` is tracked |
+| Secret scanning on every commit | `gitleaks` via pre-commit hook |
+| Runtime outputs git-ignored | `outputs/*` excluded except `.gitkeep` |
+| No hardcoded credentials | All secrets loaded via `python-dotenv` with absolute path |
+| Playwright session isolated | Browser profile stored in `.playwright_profile/` (git-ignored) |
 
 ---
 

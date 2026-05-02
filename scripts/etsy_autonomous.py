@@ -80,6 +80,7 @@ from common import (
     load_state,
     save_state,
 )
+from db import log_run
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_ENV_FILE)
@@ -222,6 +223,7 @@ def main() -> None:
 
     done  = sum(1 for v in state["checklist"].values() for t in v if t["status"] == "completed")
     total = sum(len(v) for v in state["checklist"].values())
+    log_run("autonomous_executor", "etsy_autonomous", "success", f"Tasks completed: {done}/{total}")
     console.print(Panel(
         f"[bold green]Launch complete[/bold green]\n\n"
         f"Tasks: {done}/{total}\n"
@@ -232,4 +234,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        log_run("autonomous_executor", "etsy_autonomous", "failed", str(exc))
+        raise

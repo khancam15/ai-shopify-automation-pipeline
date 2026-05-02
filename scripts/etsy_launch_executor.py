@@ -69,6 +69,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 from common import call_with_retry
+from db import log_run
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_ENV_FILE)
@@ -465,6 +466,7 @@ def main() -> None:
     total     = sum(len(v) for v in checklist.values())
     completed = sum(1 for v in checklist.values() for t in v if t["status"] == "completed")
 
+    log_run("launch_executor", "etsy_launch_executor", "success", f"Tasks completed: {completed}/{total}")
     console.print(Panel(
         f"[bold green]Launch complete[/bold green]\n\n"
         f"Tasks completed: {completed}/{total}\n"
@@ -477,4 +479,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        log_run("launch_executor", "etsy_launch_executor", "failed", str(exc))
+        raise

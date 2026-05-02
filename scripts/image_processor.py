@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from PIL import Image
+from db import log_run
 
 _ROOT       = Path(__file__).resolve().parent.parent
 PRODUCTS_DIR = _ROOT / "02_Products"
@@ -86,7 +87,9 @@ if __name__ == "__main__":
     product = sys.argv[1]
     try:
         paths = process_mockups(product)
+        log_run(product, "image_processor", "success", f"{len(paths)} images processed")
         print(f"\n  Done — {len(paths)} images processed for: {product}")
     except (FileNotFoundError, ValueError) as e:
+        log_run(product, "image_processor", "failed", str(e))
         print(f"[error] {e}")
         sys.exit(1)

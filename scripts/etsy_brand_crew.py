@@ -64,6 +64,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool
+from db import log_run
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -411,7 +412,12 @@ if __name__ == "__main__":
     print(f"  Niche: AI-selected by Niche Scout agent")
     print(f"{'─'*60}\n")
 
-    result = brand_crew.kickoff()
+    try:
+        result = brand_crew.kickoff()
+        log_run("brand_builder", "etsy_brand_crew", "success", "brand_guide.md written")
+    except Exception as exc:
+        log_run("brand_builder", "etsy_brand_crew", "failed", str(exc))
+        raise
 
     print(f"\n{'─'*60}")
     print("  Brand guide written to: outputs/brand_guide.md")

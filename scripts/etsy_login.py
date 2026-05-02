@@ -40,10 +40,25 @@ def run_login() -> None:
     with sync_playwright() as pw:
         browser = pw.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
-            headless=False,         # headed — you must be able to see the browser
-            args=["--no-sandbox"],
+            headless=False,
+            channel="chrome",       # use your real installed Chrome, not Playwright's Chromium
+            args=[
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+            ],
+            ignore_default_args=["--enable-automation"],
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            slow_mo=100,            # slight delay between actions — looks human
         )
         page = browser.pages[0] if browser.pages else browser.new_page()
+
+        # Remove navigator.webdriver flag that Etsy's bot detection checks
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
         page.goto(ETSY_URL, wait_until="domcontentloaded", timeout=30_000)
 
         input("  Press ENTER after logging in to save session and close browser...")

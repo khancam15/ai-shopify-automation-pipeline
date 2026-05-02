@@ -23,6 +23,10 @@ outputs/*
 !outputs/.gitkeep
 *.log
 
+# Loop logs (keep directory skeleton in git)
+logs/*
+!logs/.gitkeep
+
 # OS / editor
 .DS_Store
 .vscode/

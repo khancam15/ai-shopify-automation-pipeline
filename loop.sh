@@ -116,6 +116,12 @@ while true; do
         LAST_DIGEST_DATE="$TODAY"
     fi
 
+    # ── Canva watcher ─────────────────────────────────────────────────────────
+    # Checks 03_Canva_Exports/ for new product folders synced from Dropbox/Drive.
+    # Non-fatal — if no new products found it logs and moves on.
+    _run_phase "Canva watcher" "$PYTHON" scripts/canva_watcher.py \
+        || _err "Canva watcher failed — non-fatal."
+
     # ── Phase 1: Brand Builder ────────────────────────────────────────────────
     # Only regenerates brand_guide.md if it's older than 7 days, to avoid
     # burning Serper + Anthropic credits on every hourly cycle.

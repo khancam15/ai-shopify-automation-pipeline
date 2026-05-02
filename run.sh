@@ -56,6 +56,15 @@ case "$PHASE" in
         echo "[run.sh] Sending email digest now"
         "$PYTHON" scripts/email_digest.py
         ;;
+    watch)
+        echo "[run.sh] Checking Canva exports inbox"
+        "$PYTHON" scripts/canva_watcher.py
+        ;;
+    meta)
+        _require_product
+        echo "[run.sh] Generating meta.json for: $PRODUCT"
+        "$PYTHON" scripts/meta_generator.py "$PRODUCT" ${3:+--price "$3"}
+        ;;
     phase1)
         echo "[run.sh] Starting Phase 1 — Brand Builder"
         "$PYTHON" scripts/etsy_brand_crew.py

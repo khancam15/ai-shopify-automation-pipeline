@@ -32,6 +32,7 @@ ai-etsy-product-pipeline/
 ├── .gitignore
 ├── .pre-commit-config.yaml   # gitleaks secret scan on every commit
 ├── run.sh                    # VPS entry point for all phases
+├── loop.sh                   # Autonomous loop — runs full cycles on interval
 ├── setup_vps.sh              # One-time VPS bootstrap script
 ├── requirements.txt
 ├── pyproject.toml
@@ -73,6 +74,11 @@ ai-etsy-product-pipeline/
     ├── week_log.md
     ├── executor_state.json
     └── cron.log
+
+└── logs/                     # Autonomous loop logs (git-ignored)
+    ├── loop.log              # all stdout/stderr
+    ├── loop_errors.log       # failures only
+    └── loop.pid              # process ID for clean kill
 ```
 
 ---
@@ -106,9 +112,89 @@ nano .env
 ANTHROPIC_API_KEY=your_key_here
 SERPER_API_KEY=your_key_here
 ETSY_API_KEY=your_key_here
+CREWAI_TRACING_ENABLED=false
 ```
 
-### Run the pipeline
+### Log into Etsy (one-time)
+
+The uploader uses a persistent Playwright browser profile that saves your Etsy session. You need to log in once before running Phase 5:
+
+```bash
+python scripts/etsy_login.py
+```
+
+This opens a headed browser, lets you log into Etsy, and saves the session to `.playwright_profile/`. After this, all headless uploads will stay logged in.
+
+---
+
+Create `/etc/systemd/system/etsy-pipeline.service`:
+
+```ini
+[Unit]
+Description=Etsy Pipeline Autonomous Loop
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ai-etsy-product-pipeline
+ExecStart=/root/ai-etsy-product-pipeline/loop.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start:
+
+```bash
+systemctl daemon-reload
+systemctl enable etsy-pipeline
+systemctl start etsy-pipeline
+systemctl status etsy-pipeline
+```
+
+---
+
+### Pulling updates to VPS
+
+```bash
+cd /root/ai-etsy-product-pipeline
+git pull origin main
+systemctl restart etsy-pipeline
+```
+
+---
+
+## Quick Start
+
+### Option A: Autonomous Loop (Recommended)
+
+Run the full pipeline continuously on a schedule (default: every 1 hour):
+
+```bash
+# Run forever in background
+nohup ./loop.sh >> logs/loop.log 2>&1 &
+
+# Or test one cycle without sleeping
+./loop.sh --once
+
+# Watch it live
+tail -f logs/loop.log
+
+# Stop it cleanly
+kill $(cat logs/loop.pid)
+```
+
+**How it works:**
+- Every cycle: Phase 1 (brand, skipped if <7 days old) → Phase 2 (copy) → Phase 4–7 (process, upload, SEO)
+- Checks exit code of each phase before proceeding — any failure halts that cycle
+- Phase 6 (SEO) and 7 (health) are non-fatal — listing already published
+- Logs everything to `logs/loop.log`, errors to `logs/loop_errors.log`
+- Sleep interval: 3600s (default) or override with `SLEEP=7200 ./loop.sh`
+
+### Option B: Manual Phase-by-Phase
 
 ```bash
 ./run.sh db-init                     # initialise database (once)
@@ -118,25 +204,28 @@ ETSY_API_KEY=your_key_here
 ./run.sh phase5 "ProductName"        # upload to Etsy
 ./run.sh phase6 "ProductName"        # SEO gap analysis
 ./run.sh phase7                      # health dashboard
-./run.sh full   "ProductName"        # phases 4 → 5 → 6 in one command
+./run.sh full "ProductName"          # phases 4 → 5 → 6 in one command
 ```
 
-### Pulling updates to VPS
+---
+
+## Chrome Extension Integration
+
+Use `etsy_autonomous.py` to generate structured 4-part prompts for the Claude Chrome extension:
 
 ```bash
-cd /root/ai-etsy-product-pipeline
-git pull origin main
+./run.sh phase2-rich
 ```
 
-### Cron examples
+Outputs to `outputs/master.txt` — each prompt includes:
+1. Goal and context
+2. Step-by-step browser actions
+3. Safety constraints
+4. Done checklist with proof items
 
-```bash
-# Daily health check at 8am
-0 8 * * * /root/ai-etsy-product-pipeline/run.sh phase7 >> /root/ai-etsy-product-pipeline/outputs/cron.log 2>&1
+Copy/paste each week's prompt into the extension to execute the launch plan manually or via Copilot.
 
-# Phase 2 daily at 6am
-0 6 * * * /root/ai-etsy-product-pipeline/run.sh phase2 >> /root/ai-etsy-product-pipeline/outputs/cron.log 2>&1
-```
+---
 
 ---
 

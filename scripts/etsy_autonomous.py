@@ -34,7 +34,7 @@ MODEL      = "claude-3-5-sonnet-20241022"
 BRAND_FILES = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE = Path("outputs/executor_state.json")
 LOG_FILE   = Path("outputs/week_log.md")
-MASTER_TEMPLATE_FILE = Path("prompts_example/master.txt")
+MASTER_TEMPLATE_FILE = Path("prompts/master.txt")
 MASTER_PROMPT_FILE = Path("outputs/master.txt")
 Path("outputs").mkdir(exist_ok=True)
 

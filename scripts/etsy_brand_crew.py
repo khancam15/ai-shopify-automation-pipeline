@@ -1,15 +1,62 @@
 """
-etsy_brand_crew.py
-──────────────────
-Run from the project root:
+etsy_brand_crew.py  —  Phase 1: Brand Builder
+──────────────────────────────────────────────
+Run:
     python scripts/etsy_brand_crew.py
+    ./run.sh phase1                      # VPS shortcut
 
 Requires:
-    pip install crewai crewai-tools
-    ANTHROPIC_API_KEY and SERPER_API_KEY in your .env
+    ANTHROPIC_API_KEY and SERPER_API_KEY in .env
 
-The crew performs a full 6-agent Etsy brand build driven by live
-market research. A final brand_guide.md is written to ./outputs/.
+Execution flow
+──────────────
+Six CrewAI agents run sequentially (Process.sequential). Each agent's
+output is passed as context to the agents that follow it.
+
+  Step 1 — niche_scout (task_niche)
+    Uses Serper live search to evaluate 3–5 candidate niches across demand,
+    competition gap, digital-product fit, price point, and durability.
+    Produces: one CHOSEN NICHE sentence.
+
+  Step 2 — market_analyst (task_research)
+    Receives the CHOSEN NICHE from Step 1.
+    Searches for top 5 competitor stores, buyer sentiment in reviews, top
+    10 keywords, 2+ positioning gaps, and dominant visual styles.
+    Produces: structured market research report (5 sections).
+
+  Step 3 — brand_strategist (task_strategy)
+    Receives Steps 1–2.
+    Defines refined niche, target buyer persona, 3 store name options,
+    recommended store name, one-sentence positioning statement, and 3 tone
+    adjectives.
+    Produces: brand foundation document (6 sections).
+
+  Step 4 — visual_director (task_visual)
+    Receives Steps 2–3.
+    Designs primary color palette (hex codes + usage rules), neutral palette,
+    font pairing (Google Fonts), logo concept direction, aesthetic descriptor,
+    and 3 Canva mockup style recommendations.
+    Produces: visual identity specification (6 sections).
+
+  Step 5 — copy_strategist (task_copy)
+    Receives Steps 2–3.
+    Writes tagline, 9-bullet tone guide, keyword-first title formula, 5-section
+    listing description template, 13 Etsy SEO tags, and review request message.
+    Produces: brand copy and SEO document (6 sections).
+
+  Step 6 — launch_planner (task_launch)
+    Receives Steps 2–5.
+    Compiles all upstream deliverables into a single Markdown document, then
+    appends a 30-day launch checklist (Weeks 1–4, 5–7 actions each, free tool
+    per week).
+    Produces: outputs/brand_guide.md  ← only file written to disk.
+
+Timing: ~3–8 minutes depending on Serper and Anthropic API latency.
+Cost:   ~$0.05–0.15 at Haiku rates (6 agents × multiple tool calls each).
+
+Output
+──────
+    outputs/brand_guide.md   — full brand guide used by Phase 2 scripts
 """
 
 import os
@@ -39,6 +86,8 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 MODEL = "claude-haiku-4-5-20251001"   # fastest / most cost-efficient for agentic loops
 
 # ─── TOOLS ───────────────────────────────────────────────────────────────────
+# SerperDevTool fires a real Google/Etsy search on every agent tool call.
+# n_results=8 caps results per query to keep token usage predictable.
 
 search     = SerperDevTool(n_results=8)
 
@@ -329,6 +378,9 @@ task_launch = Task(
 )
 
 # ─── CREW ────────────────────────────────────────────────────────────────────
+# Tasks run in declaration order. Each task's `context` list controls which
+# prior outputs the agent can read — only what it genuinely needs, not the
+# full history, to avoid context bloat degrading output quality.
 
 brand_crew = Crew(
     agents=[
@@ -340,14 +392,14 @@ brand_crew = Crew(
         launch_planner,
     ],
     tasks=[
-        task_niche,
-        task_research,
-        task_strategy,
-        task_visual,
-        task_copy,
-        task_launch,
+        task_niche,       # Step 1 → CHOSEN NICHE
+        task_research,    # Step 2 → market research report  (reads: step 1)
+        task_strategy,    # Step 3 → brand foundation        (reads: steps 1–2)
+        task_visual,      # Step 4 → visual identity spec    (reads: steps 2–3)
+        task_copy,        # Step 5 → copy + SEO system       (reads: steps 2–3)
+        task_launch,      # Step 6 → brand_guide.md on disk  (reads: steps 2–5)
     ],
-    process=Process.sequential,   # each task feeds context into the next
+    process=Process.sequential,
     verbose=True,
 )
 

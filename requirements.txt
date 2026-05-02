@@ -1,5 +1,18 @@
+# Core AI / LLM
 anthropic==0.97.0
 crewai==1.14.2
 crewai-tools==1.14.2
+
+# Browser automation — Phase 5 headless Chromium (VPS)
+# After pip install run: playwright install chromium --with-deps
+playwright>=1.44.0
+
+# Image processing — Phase 4.1 resize mockups to 2000x2000 JPEG
+Pillow>=10.3.0
+
+# HTTP — Phase 6 Etsy API calls
+requests>=2.32.0
+
+# Utilities
 python-dotenv==1.1.1
 rich==14.3.4

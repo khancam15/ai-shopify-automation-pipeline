@@ -1,20 +1,19 @@
 """
-etsy_login.py — One-time Etsy session setup
-─────────────────────────────────────────────
-Opens a headed (visible) Chromium browser so you can log into Etsy manually.
-The session is saved to .playwright_profile/ — all future headless runs
-in etsy_uploader.py reuse this saved session without re-logging in.
+etsy_login.py — One-time Etsy session setup (run on Mac only)
+──────────────────────────────────────────────────────────────
+Opens a headed Chrome browser so you can log into Etsy manually.
+The session is saved to .playwright_profile/ — etsy_uploader.py on the VPS
+reuses this saved session headlessly without ever re-logging in.
 
-Run this ONCE on your VPS (requires a GUI or X forwarding), or on your
-local Mac before copying .playwright_profile/ to the VPS.
+This is the ONLY script that runs on your Mac. Everything else runs on the VPS.
 
-Usage:
+Usage (💻 HOST — Mac terminal, not SSH):
     python scripts/etsy_login.py
 
 After logging in:
     Press ENTER in this terminal to save the session and close the browser.
 
-Copying session to VPS (if logged in on Mac):
+Copy the saved session to VPS (run on Mac):
     scp -r .playwright_profile/ root@YOUR_VPS_IP:/root/ai-etsy-product-pipeline/
 """
 

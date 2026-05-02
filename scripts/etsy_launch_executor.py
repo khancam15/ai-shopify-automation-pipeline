@@ -28,19 +28,17 @@ Execution flow
 
   Step 4 — Weekly execution loop (Weeks 1–4)
     For each week, iterates every pending task and calls execute_task(),
-    which asks Claude (via the Anthropic API) to produce a ready-to-paste
-    Claude Chrome extension prompt for that task.
+    which asks Claude (via the Anthropic API) to generate actual Etsy
+    listing content (title, tags, description) in structured format.
     After each task:
-      • The prompt is appended to outputs/master.txt
+      • The listing content is appended to outputs/master.txt
       • The task is marked "completed" with a timestamp
       • A log entry is written to outputs/week_log.md
       • State is flushed to outputs/executor_state.json (crash-safe)
     A 2-second pause between tasks prevents rate-limit bursts.
 
   Step 5 — Week 4 feedback loop (automatic, runs after Week 4 tasks)
-    Generates an Etsy Stats analysis prompt that instructs Claude Chrome
-    to navigate to the store's stats dashboard, identify underperforming
-    tags, and return structured JSON recommendations.
+    Generates SEO tag recommendations based on brand guide and pipeline data.
     Output saved to outputs/feedback_report.md.
 
   Step 6 — Final summary
@@ -48,7 +46,7 @@ Execution flow
 
 Outputs
 ───────
-    outputs/master.txt          — all weekly prompts, ready for Chrome extension
+    outputs/master.txt          — structured product listings (parsed by meta_generator.py)
     outputs/week_log.md         — timestamped task execution log
     outputs/feedback_report.md  — Week 4 tag optimisation recommendations
     outputs/executor_state.json — resumable run state
@@ -174,8 +172,7 @@ def initialize_master_prompt_file() -> None:
         return
 
     MASTER_PROMPT_FILE.write_text(
-        "# Master Claude Chrome Extension Prompts\n\n"
-        "Use this file to execute each weekly launch task in Claude Chrome extension.\n"
+        "# Product Listings Master File\n\n"
         f"Generated: {datetime.now().isoformat()}\n\n",
         encoding="utf-8",
     )
@@ -194,36 +191,6 @@ def append_master_prompt(week_label: str, task_number: int, task_text: str, prom
 
 # ─── STEP 4 — SINGLE-TASK EXECUTOR ───────────────────────────────────────────
 
-# build_system_prompt is defined but not called in the current execution path —
-# execute_task uses an inline system prompt instead. Kept for reference/extension.
-def build_system_prompt(brand_guide: str, week_label: str) -> str:
-    return f"""You are an autonomous Etsy store launch agent for the brand "Freelance Flow".
-
-You have full access to a web browser, a text editor, and a bash terminal.
-Your job is to complete the assigned task completely and verify success before finishing.
-
-## Brand context (from the generated brand guide)
-
-{brand_guide}
-
-## Operating rules
-- You are executing Week: {week_label}
-- Use Claude in Chrome to navigate to the correct platform for each task.
-- For Canva tasks: go to canva.com, select the relevant template, apply brand colors
-  (#B2E0D4 mint, #FFBFA0 peach, #406E8E slate, #F6F5F0 cream, #333333 charcoal),
-  use Poppins for headings and Roboto for body text.
-- For Etsy tasks: go to etsy.com/your/shops/me/tools and log in if prompted.
-  Wait for explicit user confirmation before clicking any purchase or publish button.
-- For Pinterest/Instagram tasks: open the platform and create content using brand copy
-  extracted directly from the brand guide above.
-- After completing each task, briefly confirm what was done and what URL or file was produced.
-- If you encounter a CAPTCHA or 2FA prompt, pause and inform the user.
-- Never enter payment details, passwords, or personal credentials. Ask the user.
-- Log every completed action to: outputs/week_log.md
-
-## Task format
-You will receive one task at a time. Complete it fully before returning.
-"""
 
 
 def execute_task(
@@ -234,16 +201,27 @@ def execute_task(
 ) -> str:
     response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
-        max_tokens=1000,
-        system=f"""You are an Etsy launch assistant for The Freelance Command Center.
+        max_tokens=1500,
+        system=f"""You are an autonomous Etsy product content generator for The Freelance Command Center.
+
 Brand guide context:
 {brand_guide[:2000]}
-Generate a clear step-by-step prompt the user pastes into Claude in Chrome to complete this task.""",
-        messages=[{"role": "user", "content": f"Generate a Claude in Chrome prompt for: {task_text}"}],
+
+Generate complete, ready-to-use Etsy listing content. Output MUST use this exact format:
+
+1. [Product Name] ($[price])
+
+**Title**: [SEO-optimized Etsy title, max 140 characters]
+
+**Tags**: [tag1, tag2, tag3, tag4, tag5, tag6, tag7, tag8, tag9, tag10, tag11, tag12, tag13]
+
+**Full Description**:
+[200-400 word compelling product description with hook, features, benefits, and call to action]
+
+---""",
+        messages=[{"role": "user", "content": f"Generate Etsy listing content for this launch task: {task_text}"}],
     ))
-    result = response.content[0].text
-    print(f"\n--- PASTE INTO CLAUDE IN CHROME ---\n{result}\n---\n")
-    return result
+    return response.content[0].text
 
 
 
@@ -328,71 +306,67 @@ def run_weekly_agent(
 
 # ─── STEP 6 — WEEK 4 FEEDBACK LOOP ────────────────────────────────────────────
 
-FEEDBACK_PROMPT = """
-You are the Week 4 optimization agent for Freelance Flow on Etsy.
-
-Using the browser, navigate to your Etsy Stats dashboard at:
-  https://www.etsy.com/your/shops/me/stats
-
-Do the following:
-1. Find the "Search terms" section showing which keywords brought visitors.
-2. Find the "Listings" section showing click-through rate per listing.
-3. Identify the 3 lowest-performing tags (fewest clicks or impressions).
-4. Identify the 3 best-performing tags (most clicks).
-5. Suggest 3 replacement tags for the underperformers, sourced from the
-   buyer language and keyword list in the brand guide.
-
-Return a JSON object in this exact format:
-{
-  "underperforming_tags": ["tag1", "tag2", "tag3"],
-  "top_performing_tags":  ["tag1", "tag2", "tag3"],
-  "replacement_tags":     ["tag1", "tag2", "tag3"],
-  "recommendation":       "One sentence summary of what to change and why."
-}
-"""
-
-
 def run_feedback_loop(brand_guide: str, state: dict) -> dict:
     """
-    Week 4 feedback agent: reads Etsy Stats and returns tag performance data.
-    Patches state with optimization recommendations.
+    Week 4 SEO optimization agent.
+    Analyses brand guide keywords and generates tag improvement recommendations.
+    Runs fully autonomously — no browser or manual step required.
     """
-    console.print(Panel("[bold amber]Week 4 — Feedback loop running[/bold amber]", style="yellow"))
+    console.print(Panel("[bold]Week 4 — SEO Feedback loop running[/bold]", style="yellow"))
 
-    result = execute_task(
-        task_text=FEEDBACK_PROMPT,
-        brand_guide=brand_guide,
-        week_label="Week 4 — Optimization",
-        week_key="week_4",
-    )
+    completed_tasks = [
+        t["task"]
+        for week_tasks in state["checklist"].values()
+        for t in week_tasks
+        if t.get("status") == "completed"
+    ]
+    task_summary = "\n".join(f"- {t}" for t in completed_tasks[:10])
 
-    # Parse the JSON block from Claude's response
+    response = call_with_retry(lambda: client.messages.create(
+        model=MODEL,
+        max_tokens=800,
+        system=f"""You are an Etsy SEO optimization agent for The Freelance Command Center.
+Brand guide context:
+{brand_guide[:2000]}
+
+Analyse the brand's target keywords and buyer language. Identify which tags are likely
+underperforming based on competition and search intent. Suggest improvements.""",
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Completed launch tasks this week:\n{task_summary}\n\n"
+                "Based on the brand guide keywords and Etsy SEO best practices, identify:\n"
+                "1. 3 tags likely underperforming (too broad or high competition)\n"
+                "2. 3 tags likely strong performers (specific buyer intent)\n"
+                "3. 3 replacement tags for the underperformers\n"
+                "4. One sentence recommendation\n\n"
+                'Return as JSON: {"underperforming_tags":[],"top_performing_tags":[],"replacement_tags":[],"recommendation":""}'
+            ),
+        }],
+    ))
+
+    result = response.content[0].text
     json_match = re.search(r"\{[\s\S]+\}", result)
     feedback_data: dict = {}
 
     if json_match:
         try:
             feedback_data = json.loads(json_match.group(0))
-            console.print("[green]✓ Etsy Stats parsed successfully[/green]")
+            console.print("[green]✓ SEO recommendations generated[/green]")
             rprint(feedback_data)
         except json.JSONDecodeError:
-            console.print("[yellow]⚠ Could not parse JSON — raw result saved[/yellow]")
             feedback_data = {"raw_result": result}
     else:
         feedback_data = {"raw_result": result}
 
-    state["feedback"] = {
-        "generated_at": datetime.now().isoformat(),
-        "data":         feedback_data,
-    }
+    state["feedback"] = {"generated_at": datetime.now().isoformat(), "data": feedback_data}
     save_state(state)
 
-    # Write feedback report
     report_path = OUTPUTS_DIR / "feedback_report.md"
     report_path.write_text(
-        f"# Etsy Stats Feedback Report\n\n"
+        f"# SEO Feedback Report\n\n"
         f"Generated: {state['feedback']['generated_at']}\n\n"
-        f"## Tag Performance\n\n"
+        f"## Tag Analysis\n\n"
         f"```json\n{json.dumps(feedback_data, indent=2)}\n```\n\n"
         f"## Next Action\n\n"
         f"{feedback_data.get('recommendation', 'See raw result above.')}\n",
@@ -407,7 +381,7 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
 def main() -> None:
     console.print(Panel(
         "[bold]Freelance Flow — Phase 2 Autonomous Executor[/bold]\n"
-        "[dim]Claude in Chrome · Anthropic API · outputs/brand_guide.md[/dim]",
+        "[dim]Anthropic API · outputs/brand_guide.md → outputs/master.txt[/dim]",
         style="cyan",
     ))
 

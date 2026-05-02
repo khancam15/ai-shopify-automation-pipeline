@@ -1,6 +1,6 @@
 """
-etsy_autonomous.py  —  Phase 2 (alt): Richer Prompt Engine
-────────────────────────────────────────────────────────────
+etsy_autonomous.py  —  Phase 2 (alt): Richer Listing Generator
+────────────────────────────────────────────────────────────────
 Run:
     python scripts/etsy_autonomous.py
     ./run.sh phase2-rich                      # VPS shortcut
@@ -11,51 +11,35 @@ Requires:
 
 How this differs from etsy_launch_executor.py
 ──────────────────────────────────────────────
-This script and etsy_launch_executor.py cover the same 4-week task list but
-generate prompts in different formats:
+Both scripts generate Etsy listing content from the brand guide, but in different
+detail levels:
 
-    etsy_launch_executor.py  — concise step-by-step prompt (max_tokens=1000)
-                               good for quick iteration and shorter tasks
+    etsy_launch_executor.py  — concise listing (max_tokens=1500)
+                               good for quick iteration and batch generation
 
-    etsy_autonomous.py       — structured 4-part prompt (max_tokens=1200):
-                               1) Goal
-                               2) Step-by-step browser actions
-                               3) Safety constraints (no publish/purchase without confirmation)
-                               4) Done checklist with proof items
-                               better for complex tasks that need verification steps
+    etsy_autonomous.py       — richer 4-part listing (max_tokens=2000):
+                               1) Product concept and positioning
+                               2) Full SEO-optimized title
+                               3) 13 targeted tags
+                               4) Complete description with hook, features, CTA
+                               better for high-priority hero listings
 
-Use whichever output format works best with your Claude Chrome extension workflow.
-Running both on the same brand guide is safe — they write to the same
-outputs/master.txt (later run appends to what the earlier wrote) and share
+Both write to outputs/master.txt in the same structured format parseable by
+meta_generator.py. Running both on the same brand guide is safe — they share
 outputs/executor_state.json, so start fresh (delete state file) if you want
 independent runs.
 
 Execution flow
 ──────────────
   Step 1 — Load brand guide
-    Reads outputs/brand_guide.md via load_brand_guide() from common.py.
-    Falls back to brand_guide.md in project root if the outputs/ copy is missing.
-
-  Step 2 — Resume or start fresh
-    Checks outputs/executor_state.json. Resumes from last completed task if
-    present; otherwise parses the brand guide with extract_checklist() and
-    saves initial state.
-
-  Step 3 — Initialise outputs/master.txt
-    Seeded from prompts/master.txt on a fresh run. Not overwritten on resume.
-
-  Step 4 — Weekly loop (Weeks 1–4)
-    For each pending task, calls build_extension_prompt() which sends the task
-    and the first 3200 characters of the brand guide to the API and returns the
-    structured 4-part prompt.
-    After each task: appends to master.txt, logs to week_log.md, saves state.
-
+  Step 2 — Resume or start fresh via executor_state.json
+  Step 3 — Initialise outputs/master.txt from prompts/master.txt template
+  Step 4 — Weekly loop: generate_listing_content() for each pending task
   Step 5 — Final summary
-    Prints task completion count and output file paths.
 
 Outputs
 ───────
-    outputs/master.txt          — structured 4-part prompts for Chrome extension
+    outputs/master.txt          — structured product listings (parsed by meta_generator.py)
     outputs/week_log.md         — timestamped task execution log
     outputs/executor_state.json — resumable run state
 
@@ -104,8 +88,7 @@ def initialize_master_prompt_file() -> None:
         MASTER_PROMPT_FILE.write_text(f"{template}\n\n", encoding="utf-8")
         return
     MASTER_PROMPT_FILE.write_text(
-        "# Master Claude Chrome Extension Prompts\n\n"
-        "Use this file to execute each weekly launch task in Claude Chrome extension.\n"
+        "# Product Listings Master File\n\n"
         f"Generated: {datetime.now().isoformat()}\n\n",
         encoding="utf-8",
     )
@@ -122,14 +105,14 @@ def append_master_prompt(week_label: str, task_number: int, task_text: str, prom
         f.write(entry)
 
 
-def build_extension_prompt(task: str, guide: str, week: str) -> str:
+def generate_listing_content(task: str, guide: str, week: str) -> str:
     response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
-        max_tokens=1200,
+        max_tokens=2000,
         system=(
-            "You are an Etsy launch execution planner. "
-            "Generate one high-quality prompt the user can paste into the Claude Chrome extension. "
-            "The prompt must include objective, exact steps, constraints, and a completion checklist."
+            "You are an autonomous Etsy product content generator for The Freelance Command Center. "
+            "Generate complete, ready-to-use Etsy listing content in structured format. "
+            "Output MUST follow the exact format below so it can be parsed automatically."
         ),
         messages=[{
             "role": "user",
@@ -138,11 +121,23 @@ def build_extension_prompt(task: str, guide: str, week: str) -> str:
                 f"Task: {task}\n\n"
                 "Brand guide context:\n"
                 f"{guide[:3200]}\n\n"
-                "Output format:\n"
-                "1) Goal\n"
-                "2) Step-by-step browser actions\n"
-                "3) Safety constraints (no publish/purchase without confirmation)\n"
-                "4) Done checklist with proof items"
+                "Generate Etsy listing content in this EXACT format:\n\n"
+                "1. [Product Name] ($[price])\n\n"
+                "**Title**: [SEO-optimized Etsy title, max 140 characters]\n\n"
+                "**Tags**: [tag1, tag2, tag3, tag4, tag5, tag6, tag7, tag8, tag9, tag10, tag11, tag12, tag13]\n\n"
+                "**Full Description**:\n"
+                "[Hook sentence addressing buyer pain point]\n\n"
+                "What You Get:\n"
+                "- [feature 1]\n"
+                "- [feature 2]\n"
+                "- [feature 3]\n\n"
+                "[Benefits paragraph, 2-3 sentences]\n\n"
+                "How To Use:\n"
+                "1. Download\n"
+                "2. Open in Canva\n"
+                "3. Customize and publish\n\n"
+                "[Call to action sentence]\n\n"
+                "---"
             ),
         }],
     ))
@@ -167,10 +162,10 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
             continue
 
         console.print(f"\n  [bold cyan]Task {i+1}/{len(tasks)}:[/bold cyan] {item['task'][:70]}")
-        console.print("  [dim]Generating Claude Chrome extension prompt...[/dim]")
+        console.print("  [dim]Generating listing content...[/dim]")
 
-        result = build_extension_prompt(item["task"], guide, label)
-        rprint(f"\n[bold yellow]--- PASTE INTO CLAUDE CHROME EXTENSION ---[/bold yellow]\n{result}\n")
+        result = generate_listing_content(item["task"], guide, label)
+        rprint(f"\n[bold cyan]--- LISTING CONTENT GENERATED ---[/bold cyan]\n{result}\n")
         append_master_prompt(label, i + 1, item["task"], result)
 
         item["status"]       = "completed"
@@ -190,8 +185,8 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
 
 def main() -> None:
     console.print(Panel(
-        "[bold]Creator Kit — Autonomous Executor[/bold]\n"
-        f"[dim]{MODEL} · outputs/brand_guide.md[/dim]",
+        "[bold]Creator Kit — Autonomous Listing Generator[/bold]\n"
+        f"[dim]{MODEL} · outputs/brand_guide.md → outputs/master.txt[/dim]",
         style="cyan",
     ))
 

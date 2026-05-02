@@ -66,8 +66,9 @@ import os
 import time
 from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
+
 import anthropic
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich import print as rprint

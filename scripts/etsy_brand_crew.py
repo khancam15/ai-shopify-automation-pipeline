@@ -88,9 +88,8 @@ MODEL = "claude-haiku-4-5-20251001"   # fastest / most cost-efficient for agenti
 
 # ─── TOOLS ───────────────────────────────────────────────────────────────────
 # SerperDevTool fires a real Google/Etsy search on every agent tool call.
-# n_results=8 caps results per query to keep token usage predictable.
-
-search     = SerperDevTool(n_results=8)
+# n_results=5 keeps token usage predictable and reduces API round-trips.
+search = SerperDevTool(n_results=5)
 
 
 # ─── AGENTS ──────────────────────────────────────────────────────────────────
@@ -113,6 +112,7 @@ niche_scout = Agent(
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
+    max_iter=3,         # 1–2 searches is enough to pick a niche
 )
 
 market_analyst = Agent(
@@ -131,6 +131,7 @@ market_analyst = Agent(
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
+    max_iter=4,         # up to 3 searches to cover niche, competitors, keywords
 )
 
 brand_strategist = Agent(
@@ -145,10 +146,11 @@ brand_strategist = Agent(
         "into a coherent identity that attracts a specific buyer and repels everyone else. "
         "You believe a brand with sharp edges outperforms a brand trying to appeal to all."
     ),
-    tools=[search],
+    tools=[],           # works entirely from market_analyst context — no live search needed
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
+    max_iter=2,
 )
 
 visual_director = Agent(
@@ -165,10 +167,11 @@ visual_director = Agent(
         "recognition at 500×500 pixels is a non-negotiable constraint on Etsy. "
         "You base every visual decision on what the market research says buyers respond to."
     ),
-    tools=[search],
+    tools=[],           # works from brand_strategist context — no live search needed
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
+    max_iter=2,
 )
 
 copy_strategist = Agent(
@@ -184,10 +187,11 @@ copy_strategist = Agent(
         "algorithm rewards keyword-first titles and relevant long-tail tags. "
         "You write the way the target buyer thinks, not the way the seller thinks."
     ),
-    tools=[search],
+    tools=[],           # works from prior context — search would waste API calls here
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
+    max_iter=2,
 )
 
 launch_planner = Agent(
@@ -207,6 +211,7 @@ launch_planner = Agent(
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
+    max_iter=2,
 )
 
 # ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -402,6 +407,7 @@ brand_crew = Crew(
     ],
     process=Process.sequential,
     verbose=True,
+    max_rpm=8,            # max 8 API requests/min across all agents — prevents 429s
 )
 
 # ─── ENTRY POINT ─────────────────────────────────────────────────────────────

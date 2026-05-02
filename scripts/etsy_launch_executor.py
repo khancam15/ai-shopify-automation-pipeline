@@ -36,8 +36,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
+from common import call_with_retry
 
-load_dotenv()
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_ENV_FILE)
 
 
 def _require_env(key: str) -> str:
@@ -195,7 +197,7 @@ def execute_task(
     week_label: str,
     week_key: str,
 ) -> str:
-    response = client.messages.create(
+    response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
         max_tokens=1000,
         system=f"""You are an Etsy launch assistant for The Freelance Command Center.
@@ -203,7 +205,7 @@ Brand guide context:
 {brand_guide[:2000]}
 Generate a clear step-by-step prompt the user pastes into Claude in Chrome to complete this task.""",
         messages=[{"role": "user", "content": f"Generate a Claude in Chrome prompt for: {task_text}"}],
-    )
+    ))
     result = response.content[0].text
     print(f"\n--- PASTE INTO CLAUDE IN CHROME ---\n{result}\n---\n")
     return result

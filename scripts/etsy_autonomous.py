@@ -1,9 +1,9 @@
 """
 etsy_autonomous.py
 ──────────────────
-Phase 2 executor for claude-3-5-sonnet · computer use.
+Phase 2 executor — richer prompt engine for the Claude Chrome extension.
 Reads the generated brand guide, extracts the 30-day checklist, and generates
-ready-to-paste prompts for each launch task.
+ready-to-paste prompts for each launch task (goal + steps + constraints + done list).
 
 Run:
     python scripts/etsy_autonomous.py
@@ -14,9 +14,7 @@ Requirements:
 """
 
 import os
-import json
 import time
-import re
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -25,76 +23,35 @@ from rich.console import Console
 from rich.panel import Panel
 from rich import print as rprint
 
-load_dotenv()
+from common import (
+    call_with_retry,
+    extract_checklist,
+    load_brand_guide,
+    load_state,
+    save_state,
+)
+
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_ENV_FILE)
 
 console = Console()
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-MODEL      = "claude-3-5-sonnet-20241022"
-BRAND_FILES = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
-STATE_FILE = Path("outputs/executor_state.json")
-LOG_FILE   = Path("outputs/week_log.md")
-MASTER_TEMPLATE_FILE = Path("prompts/master.txt")
-MASTER_PROMPT_FILE = Path("outputs/master.txt")
-Path("outputs").mkdir(exist_ok=True)
-
-# ── Load brand guide ──────────────────────────────────────────────────────────
-def load_brand_guide() -> str:
-    for brand_file in BRAND_FILES:
-        if brand_file.exists():
-            return brand_file.read_text(encoding="utf-8")
-
-    preferred_file = BRAND_FILES[0]
-    fallback_file = BRAND_FILES[1]
-    if not preferred_file.exists():
-        raise FileNotFoundError(
-            f"Brand guide not found at {preferred_file.resolve()} or {fallback_file.resolve()}\n"
-            "Run etsy_brand_crew.py first."
-        )
-
-# ── Extract checklist ─────────────────────────────────────────────────────────
-def extract_checklist(guide: str) -> dict:
-    patterns = {
-        "week_1": r"### Week 1.*?(?=### Week 2|$)",
-        "week_2": r"### Week 2.*?(?=### Week 3|$)",
-        "week_3": r"### Week 3.*?(?=### Week 4|$)",
-        "week_4": r"### Week 4.*?(?=$)",
-    }
-    checklist = {}
-    for key, pattern in patterns.items():
-        match = re.search(pattern, guide, re.DOTALL | re.IGNORECASE)
-        if not match:
-            checklist[key] = []
-            continue
-        block = match.group(0)
-        items = re.findall(r"\d+\.\s+(.+?)(?=\n\d+\.|\n\n|$)", block, re.DOTALL)
-        tool_match = re.search(r"\*Free Tool:\s*(.+?)\*", block)
-        tool = tool_match.group(1).strip() if tool_match else None
-        checklist[key] = [
-            {"task": item.strip().replace("**", ""), "tool": tool, "status": "pending"}
-            for item in items
-        ]
-    total = sum(len(v) for v in checklist.values())
-    console.print(f"[dim]Extracted {total} tasks from the generated brand guide[/dim]")
-    return checklist
-
-# ── State management ──────────────────────────────────────────────────────────
-def save_state(state: dict):
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
-def load_state() -> dict | None:
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    return None
+MODEL               = "claude-haiku-4-5-20251001"
+_ROOT               = Path(__file__).resolve().parent.parent
+BRAND_FILES         = (_ROOT / "outputs" / "brand_guide.md", _ROOT / "brand_guide.md")
+STATE_FILE          = _ROOT / "outputs" / "executor_state.json"
+LOG_FILE            = _ROOT / "outputs" / "week_log.md"
+MASTER_TEMPLATE_FILE = _ROOT / "prompts" / "master.txt"
+MASTER_PROMPT_FILE  = _ROOT / "outputs" / "master.txt"
+(_ROOT / "outputs").mkdir(exist_ok=True)
 
 
 def initialize_master_prompt_file() -> None:
-    """Create or reset outputs/master.txt from prompts_example/master.txt when available."""
     if MASTER_TEMPLATE_FILE.exists():
         template = MASTER_TEMPLATE_FILE.read_text(encoding="utf-8").rstrip()
         MASTER_PROMPT_FILE.write_text(f"{template}\n\n", encoding="utf-8")
         return
-
     MASTER_PROMPT_FILE.write_text(
         "# Master Claude Chrome Extension Prompts\n\n"
         "Use this file to execute each weekly launch task in Claude Chrome extension.\n"
@@ -113,9 +70,9 @@ def append_master_prompt(week_label: str, task_number: int, task_text: str, prom
     with open(MASTER_PROMPT_FILE, "a", encoding="utf-8") as f:
         f.write(entry)
 
-# ── Prompt generation for Claude Chrome extension ────────────────────────────
+
 def build_extension_prompt(task: str, guide: str, week: str) -> str:
-    response = client.messages.create(
+    response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
         max_tokens=1200,
         system=(
@@ -123,32 +80,31 @@ def build_extension_prompt(task: str, guide: str, week: str) -> str:
             "Generate one high-quality prompt the user can paste into the Claude Chrome extension. "
             "The prompt must include objective, exact steps, constraints, and a completion checklist."
         ),
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Week: {week}\n"
-                    f"Task: {task}\n\n"
-                    "Brand guide context:\n"
-                    f"{guide[:3200]}\n\n"
-                    "Output format:\n"
-                    "1) Goal\n"
-                    "2) Step-by-step browser actions\n"
-                    "3) Safety constraints (no publish/purchase without confirmation)\n"
-                    "4) Done checklist with proof items"
-                ),
-            }
-        ],
-    )
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Week: {week}\n"
+                f"Task: {task}\n\n"
+                "Brand guide context:\n"
+                f"{guide[:3200]}\n\n"
+                "Output format:\n"
+                "1) Goal\n"
+                "2) Step-by-step browser actions\n"
+                "3) Safety constraints (no publish/purchase without confirmation)\n"
+                "4) Done checklist with proof items"
+            ),
+        }],
+    ))
     return response.content[0].text.strip()
 
-# ── Run one week ──────────────────────────────────────────────────────────────
+
 LABELS = {
     "week_1": "Week 1 — Storefront Setup",
     "week_2": "Week 2 — Listing Expansion",
     "week_3": "Week 3 — External Traffic",
     "week_4": "Week 4 — Optimization",
 }
+
 
 def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
     label = LABELS[key]
@@ -174,23 +130,23 @@ def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
             f.write(f"\n## {label} · Task {i+1}\n**Task:** {item['task']}\n**Result:** {result[:300]}\n---\n")
 
         state["checklist"][key] = tasks
-        save_state(state)
+        save_state(STATE_FILE, state)
         console.print(f"  [green]✓ Task {i+1} complete[/green]")
         time.sleep(2)
 
     return tasks
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
+
+def main() -> None:
     console.print(Panel(
-        "[bold]The Freelance Command Center — Autonomous Executor[/bold]\n"
-        "[dim]claude-3-5-sonnet · computer use · outputs/brand_guide.md[/dim]",
-        style="cyan"
+        "[bold]Creator Kit — Autonomous Executor[/bold]\n"
+        f"[dim]{MODEL} · outputs/brand_guide.md[/dim]",
+        style="cyan",
     ))
 
-    guide = load_brand_guide()
+    guide = load_brand_guide(BRAND_FILES)
 
-    state = load_state()
+    state = load_state(STATE_FILE)
     if state:
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
@@ -198,7 +154,7 @@ def main():
     else:
         checklist = extract_checklist(guide)
         state = {"started_at": datetime.now().isoformat(), "checklist": checklist}
-        save_state(state)
+        save_state(STATE_FILE, state)
         initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")
 
@@ -221,8 +177,9 @@ def main():
         f"Tasks: {done}/{total}\n"
         f"Log: outputs/week_log.md\n"
         f"Master prompts: outputs/master.txt",
-        style="green"
+        style="green",
     ))
+
 
 if __name__ == "__main__":
     main()

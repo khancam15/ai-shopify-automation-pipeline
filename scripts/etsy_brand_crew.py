@@ -112,7 +112,7 @@ niche_scout = Agent(
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
-    max_iter=3,         # 1–2 searches is enough to pick a niche
+    max_iter=6,         # each search = 1 iter + 1 LLM iter; allow 2-3 searches
 )
 
 market_analyst = Agent(
@@ -131,7 +131,7 @@ market_analyst = Agent(
     llm=MODEL,
     verbose=True,
     allow_delegation=False,
-    max_iter=4,         # up to 3 searches to cover niche, competitors, keywords
+    max_iter=10,        # each search = 1 iter + 1 LLM iter; allow up to 5 searches
 )
 
 brand_strategist = Agent(

@@ -40,7 +40,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 
-from db import log_run, insert_listing, update_queue_status, get_queue_items
+from db import log_run, insert_listing, update_queue_status
 
 _ROOT        = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")

@@ -1,26 +1,43 @@
 # AI Etsy Product Pipeline
 
-An end-to-end AI-powered pipeline that researches a niche, builds a full brand identity, processes product mockups, uploads listings to Etsy via headless Chromium, and runs daily SEO and health monitoring — fully autonomous on a VPS with systemd.
+An end-to-end AI-powered pipeline that researches a niche, builds a full brand identity, generates Etsy listing content, processes product mockups, and uploads listings to Etsy — fully autonomous on a VPS. Your only job is to design mockups in Canva and drop them into Google Drive.
+
+---
+
+## How it works
+
+```
+You design mockups in Canva
+  └── Export 5 JPEGs → drop into Google Drive folder
+        └── rclone syncs to VPS every 5 minutes
+              └── Canva watcher detects new product → queues it automatically
+                    └── Pipeline processes images → builds listing → uploads to Etsy
+                          └── SEO analysis runs → daily email digest sent to you
+```
+
+That's your entire workflow. Everything else runs while you sleep.
 
 ---
 
 ## Pipeline Overview
 
-| Phase | Script | What happens | Logs to DB |
-|-------|--------|-------------|-----------|
-| **0 — VPS Setup** | `setup_vps.sh` | One-time bootstrap: creates directories, installs venv, Playwright Chromium, and initialises the database | ✗ |
-| **Foundation** | `scripts/db.py` | Initialises SQLite with 4 tables: `queue`, `listings`, `run_log`, `seo_review` | ✗ |
-| **1 — Brand Build** | `scripts/etsy_brand_crew.py` | 6-agent CrewAI crew runs live market research (Serper), builds brand strategy, visual identity, SEO copy → `outputs/brand_guide.md` | ✗ |
-| **2 — Launch Executor** | `scripts/etsy_launch_executor.py` | Reads brand guide, extracts 30-day checklist, writes weekly Claude prompts → `outputs/master.txt` | ✗ |
-| **2 (alt) — Autonomous Engine** | `scripts/etsy_autonomous.py` | Richer prompt engine with completion checklists for Claude Chrome extension execution | ✗ |
-| **3 — Queue Writer** | `scripts/queue_writer.py` | Adds products to the SQLite queue with title, tags, description, price, category — manual or batch JSON mode | ✗ |
-| **4.1 — Image Processor** | `scripts/image_processor.py` | Resizes mockup images to 2000×2000 JPEG at quality 92 | ✓ |
-| **4.2 — Listing Builder** | `scripts/listing_builder.py` | Reads queue row from SQLite, assembles `listing.json` payload | ✓ |
-| **4.3 — Validator** | `scripts/pre_upload_validator.py` | Validates title ≤140 chars, exactly 13 tags, price range, ≥5 mockups — exits 0/1 for n8n routing | ✓ |
-| **4.5 — File Organizer** | `scripts/file_organizer.py` | Stages files to `04_Assets/ReadyToUpload/`, archives after publish | ✓ |
-| **5 — Etsy Uploader** | `scripts/etsy_uploader.py` | Playwright headless Chromium fills and submits listing to Etsy Seller Dashboard, captures listing URL | ✓ |
-| **6 — SEO Analyzer** | `scripts/seo_analyzer.py` | Calls Etsy API for published tags, fetches top 5 competitor listings, writes gap report to SQLite | ✓ |
-| **7 — Health Dashboard** | `scripts/health_dashboard.py` | Daily health report: published count, failure rate, stuck queue items — stdout captured by n8n | ✗ |
+| Phase | Script | What happens |
+|-------|--------|-------------|
+| **Setup** | `scripts/db.py` | SQLite with 4 tables: `queue`, `listings`, `run_log`, `seo_review` |
+| **1 — Brand Builder** | `scripts/etsy_brand_crew.py` | 6-agent CrewAI crew runs live market research (Serper), builds brand strategy, visual identity, SEO keyword map → `outputs/brand_guide.md`. Refreshes every 7 days. |
+| **2 — Launch Executor** | `scripts/etsy_launch_executor.py` | Reads brand guide, generates Etsy listing content (titles, tags, descriptions) via Anthropic API → `outputs/master.txt` |
+| **2 (rich) — Autonomous Engine** | `scripts/etsy_autonomous.py` | Same as Phase 2 but generates richer 4-part listing content with positioning, features, and CTA |
+| **Canva Watcher** | `scripts/canva_watcher.py` | Monitors `03_Canva_Exports/` (synced from Google Drive). When a folder has 5+ images + `meta.json`, moves mockups to `02_Products/` and adds product to queue automatically |
+| **Meta Generator** | `scripts/meta_generator.py` | Parses `outputs/master.txt` to extract listing content for one product and writes `meta.json` to the product's Google Drive folder |
+| **4.1 — Image Processor** | `scripts/image_processor.py` | Resizes mockup images to 2000×2000 JPEG at quality 92 |
+| **4.2 — Listing Builder** | `scripts/listing_builder.py` | Reads queue row from SQLite, assembles `listing.json` payload |
+| **4.3 — Validator** | `scripts/pre_upload_validator.py` | Validates title ≤140 chars, exactly 13 tags, price range, ≥5 mockups |
+| **4.5 — File Organizer** | `scripts/file_organizer.py` | Stages files to `04_Assets/ReadyToUpload/`, archives after publish |
+| **5 — Etsy Uploader** | `scripts/etsy_uploader.py` | Playwright headless Chromium fills and submits listing to Etsy Seller Dashboard using saved session |
+| **6 — SEO Analyzer** | `scripts/seo_analyzer.py` | Calls Etsy API for published tags, fetches competitor listings, writes gap report to SQLite |
+| **7 — Health Dashboard** | `scripts/health_dashboard.py` | Published count, failure rate, stuck queue items |
+| **Email Digest** | `scripts/email_digest.py` | Sends daily HTML email with product list, brand brief, and pipeline health stats |
+| **Etsy Login** | `scripts/etsy_login.py` | One-time Mac-only setup — opens headed Chrome for manual Etsy login, saves session to `.playwright_profile/` |
 
 ---
 
@@ -32,60 +49,59 @@ ai-etsy-product-pipeline/
 ├── .env.example                # Credentials template — copy to .env, never commit .env
 ├── .gitignore
 ├── .pre-commit-config.yaml     # gitleaks secret scan on every commit
-├── run.sh                       # VPS entry point for all phases
-├── loop.sh                      # Autonomous loop — runs full cycles on interval
-├── setup_vps.sh                 # One-time VPS bootstrap script
-├── etsy-pipeline.service        # systemd unit for auto-restart on boot
+├── run.sh                      # VPS entry point for all phases
+├── loop.sh                     # Autonomous loop — runs full cycles on interval
+├── setup_vps.sh                # One-time VPS bootstrap script
+├── setup_rclone.sh             # Google Drive → VPS sync setup (rclone)
+├── etsy-pipeline.service       # systemd unit for auto-restart on boot
 ├── requirements.txt
-├── pyproject.toml
-│
-├── config/
-│   └── .gitleaks.toml
 │
 ├── prompts/
-│   └── master.txt               # Tracked master launch prompt template
+│   └── master.txt              # Header template for outputs/master.txt
 │
 ├── scripts/
-│   ├── common.py                # Shared utilities (call_with_retry, load_state, etc.)
-│   ├── db.py                    # SQLite schema + all DB helpers
-│   ├── etsy_brand_crew.py       # Phase 1 — CrewAI brand builder
-│   ├── etsy_launch_executor.py  # Phase 2 — Launch prompt executor
-│   ├── etsy_autonomous.py       # Phase 2 alt — Autonomous prompt engine
-│   ├── etsy_login.py            # One-time Etsy session setup via Playwright
-│   ├── queue_writer.py          # Phase 3 bridge — add products to queue
-│   ├── image_processor.py       # Phase 4.1 — Mockup resize to 2000×2000 JPEG
-│   ├── listing_builder.py       # Phase 4.2 — Build listing.json from queue
-│   ├── pre_upload_validator.py  # Phase 4.3 — Pre-upload validation
-│   ├── file_organizer.py        # Phase 4.5 — Stage and archive files
-│   ├── etsy_uploader.py         # Phase 5 — Playwright headless uploader
-│   ├── seo_analyzer.py          # Phase 6 — Post-publish SEO gap analysis
-│   └── health_dashboard.py      # Phase 7 — Daily health report
+│   ├── common.py               # Shared utilities (call_with_retry, load_state, etc.)
+│   ├── db.py                   # SQLite schema + all DB helpers
+│   ├── etsy_brand_crew.py      # Phase 1 — CrewAI brand builder
+│   ├── etsy_launch_executor.py # Phase 2 — Listing content generator
+│   ├── etsy_autonomous.py      # Phase 2 alt — Richer listing content engine
+│   ├── etsy_login.py           # One-time Etsy session setup (Mac only)
+│   ├── canva_watcher.py        # Auto-detects synced Google Drive folders → queues products
+│   ├── meta_generator.py       # Extracts per-product meta.json from master.txt
+│   ├── queue_writer.py         # Manual queue entry (interactive or batch JSON)
+│   ├── image_processor.py      # Phase 4.1 — Mockup resize to 2000×2000 JPEG
+│   ├── listing_builder.py      # Phase 4.2 — Build listing.json from queue
+│   ├── pre_upload_validator.py # Phase 4.3 — Pre-upload validation
+│   ├── file_organizer.py       # Phase 4.5 — Stage and archive files
+│   ├── etsy_uploader.py        # Phase 5 — Playwright headless uploader
+│   ├── seo_analyzer.py         # Phase 6 — Post-publish SEO gap analysis
+│   ├── health_dashboard.py     # Phase 7 — Daily health report
+│   └── email_digest.py         # Daily HTML email digest via Gmail SMTP
 │
-├── 01_Queue/                    # Incoming product queue (CSV or manual)
-├── 02_Products/                 # Product source files and mockups
+├── 02_Products/                # Product source files and mockups
 │   └── [ProductName]/
-│       └── Mockups/             # Raw mockup images (PNG/JPG/WEBP)
-├── 03_Canva_Exports/            # Canva design exports before processing
+│       └── Mockups/            # Raw mockup images (PNG/JPG/WEBP)
+├── 03_Canva_Exports/           # Synced from Google Drive via rclone
+│   └── [ProductName]/
+│       ├── *.jpg               # 5 Canva mockup exports
+│       └── meta.json           # Generated by meta_generator.py
 ├── 04_Assets/
-│   ├── ReadyToUpload/           # Staged files awaiting Playwright upload
-│   │   └── [ProductName]/
-│   │       ├── listing.json
-│   │       └── *.jpg
-│   └── Archived/                # Published listings moved here post-upload
+│   ├── ReadyToUpload/          # Staged files awaiting Playwright upload
+│   └── Archived/               # Published listings moved here post-upload
 │
-├── outputs/                     # Runtime-generated files (git-ignored)
+├── outputs/                    # Runtime-generated files (git-ignored)
 │   ├── brand_guide.md
 │   ├── master.txt
 │   ├── week_log.md
 │   ├── executor_state.json
 │   ├── feedback_report.md
-│   ├── pipeline.db              # SQLite database
-│   └── cron.log
+│   └── pipeline.db             # SQLite database
 │
-└── logs/                        # Autonomous loop logs (git-ignored)
-    ├── loop.log                 # all stdout/stderr from loop.sh
-    ├── loop_errors.log          # failures only
-    └── loop.pid                 # process ID for clean kill
+└── logs/                       # Autonomous loop logs (git-ignored)
+    ├── loop.log                # All stdout/stderr from loop.sh
+    ├── loop_errors.log         # Failures only
+    ├── rclone.log              # Google Drive sync log
+    └── loop.pid                # Process ID for clean kill
 ```
 
 ---
@@ -93,16 +109,18 @@ ai-etsy-product-pipeline/
 ## Requirements
 
 - Python 3.12+
-- [Anthropic API key](https://platform.claude.com/settings/keys) — brand building and prompt generation
+- [Anthropic API key](https://platform.claude.com/settings/keys) — brand building and listing content generation
 - [Serper API key](https://serper.dev) — live market research in Phase 1
 - [Etsy API key](https://www.etsy.com/developers) — SEO analysis in Phase 6
+- Gmail account with [App Password](https://myaccount.google.com/apppasswords) — daily email digest
 - Hostinger KVM 2 VPS (or any Ubuntu 24.04 LTS server)
+- Google Drive or Dropbox — Canva mockup delivery
 
 ---
 
-## VPS Deployment (Hostinger KVM 2)
+## VPS Deployment
 
-### 1. Clone and bootstrap (first time only)
+### 1. Clone and bootstrap
 
 ```bash
 cd /root
@@ -111,48 +129,62 @@ cd ai-etsy-product-pipeline
 chmod +x setup_vps.sh && ./setup_vps.sh
 ```
 
-This creates:
-- All required directories (`01_Queue/`, `02_Products/`, `03_Canva_Exports/`, `04_Assets/`, `outputs/`, `logs/`)
-- Python 3.12 virtual environment in `.venv`
-- Playwright Chromium with system dependencies
-- SQLite database at `outputs/pipeline.db`
-
-### 2. Configure API keys
+### 2. Configure credentials
 
 ```bash
 nano .env
 ```
-
-Fill in:
 
 ```
 ANTHROPIC_API_KEY=your_key_here
 SERPER_API_KEY=your_key_here
 ETSY_API_KEY=your_key_here
 CREWAI_TRACING_ENABLED=false
+
+EMAIL_TO=your_email@gmail.com
+EMAIL_FROM=your_gmail@gmail.com
+EMAIL_SMTP_PASS=your_gmail_app_password
 ```
 
-### 3. Log into Etsy (one-time setup)
+### 3. Initialise the database
 
-The uploader uses a persistent Playwright browser profile that saves your Etsy session. You need to log in once on a machine with a display:
-
-**On your Mac (has display):**
 ```bash
+./run.sh db-init
+```
+
+### 4. Set up Google Drive sync (rclone)
+
+Authorise rclone on your Mac first (requires a browser):
+
+```bash
+# On your Mac
+rclone authorize "drive"
+# Copy the token that appears
+```
+
+Then configure on the VPS:
+
+```bash
+./setup_rclone.sh install
+./setup_rclone.sh config    # paste the token when prompted
+./setup_rclone.sh sync      # test sync
+./setup_rclone.sh cron      # install 5-minute auto-sync
+```
+
+### 5. Log into Etsy — one-time Mac setup
+
+The uploader uses a persistent Playwright browser profile. Log in once on your Mac, then copy the session to the VPS.
+
+```bash
+# On your Mac (💻 HOST)
 python scripts/etsy_login.py
-```
+# Log into Etsy in the browser that opens, then press ENTER
 
-This opens a headed browser window. Log into Etsy, then press ENTER in the terminal to save the session.
-
-**Copy to VPS:**
-```bash
+# Copy session to VPS
 scp -r .playwright_profile/ root@YOUR_VPS_IP:/root/ai-etsy-product-pipeline/
 ```
 
-After this, all headless uploads will stay logged in.
-
-### 4. Install systemd service (auto-restart on boot)
-
-The `etsy-pipeline.service` file ensures the loop keeps running even after VPS reboots:
+### 6. Install systemd service
 
 ```bash
 cp etsy-pipeline.service /etc/systemd/system/
@@ -161,7 +193,7 @@ systemctl enable etsy-pipeline
 systemctl start etsy-pipeline
 ```
 
-Verify it's running:
+Verify:
 ```bash
 systemctl status etsy-pipeline
 tail -f logs/loop.log
@@ -169,160 +201,76 @@ tail -f logs/loop.log
 
 ---
 
-## Autonomous Loop Workflow
+## Autonomous Loop
 
-The pipeline runs continuously on a timer (default: 1 hour between cycles). Each cycle:
+Each cycle runs automatically every hour:
 
-1. **Phase 1** — Brand guide (skipped if <7 days old to save API credits)
-2. **Phase 2** — Generate launch copy and add products to queue
-3. **Pick next product** from queue with `pending` status
-4. **Phase 4** — Process images, build listing, validate, stage
-5. **Phase 5** — Upload to Etsy
-6. **Phase 6** — SEO analysis (non-fatal if fails)
-7. **Phase 7** — Health report
+1. **Email digest** — sends once per calendar day
+2. **Canva watcher** — scans `03_Canva_Exports/` for new synced products
+3. **Phase 1** — brand guide (skipped if less than 7 days old)
+4. **Phase 2** — generate listing content → `outputs/master.txt`
+5. **Pick next queued product** — `pending` status from SQLite
+6. **Phase 4** — resize images → build listing → validate → stage
+7. **Phase 5** — upload to Etsy via headless Chromium
+8. **Phase 6** — SEO gap analysis (non-fatal)
+9. **Phase 7** — health dashboard
 
-**Exit code handling:** Each phase must exit 0 before the next runs. Any failure halts that cycle and waits for the next scheduled cycle.
+Exit code handling: each phase must exit 0 before the next runs. A failure halts that cycle and waits for the next scheduled run.
 
 ### Manual control
 
 ```bash
-# Start the loop
-systemctl start etsy-pipeline
-
-# Watch it live
-tail -f logs/loop.log
-
-# Stop it
-systemctl stop etsy-pipeline
-
-# Restart with latest code
-cd /root/ai-etsy-product-pipeline && git pull origin main
-systemctl restart etsy-pipeline
-
-# Check status
-systemctl status etsy-pipeline
+systemctl start etsy-pipeline        # start
+systemctl stop etsy-pipeline         # stop
+systemctl restart etsy-pipeline      # restart
+tail -f logs/loop.log                # watch live
+tail -f logs/loop_errors.log         # failures only
 ```
 
-### Alternative: Run without systemd
+### One-off commands
 
 ```bash
-# Test one cycle without sleeping
-./loop.sh --once
-
-# Run forever in background (survives SSH disconnect but not reboot)
-nohup ./loop.sh >> logs/loop.log 2>&1 &
-
-# Watch it
-tail -f logs/loop.log
-
-# Stop it
-kill $(cat logs/loop.pid)
-```
-
-**Note:** `nohup` keeps the process alive through SSH disconnect but not through VPS reboots. Use systemd for production.
-
----
-
-## Adding Products to the Queue
-
-Products must be added to the SQLite queue before Phase 4 processes them. Use `queue_writer.py`:
-
-### Interactive mode
-
-```bash
-python scripts/queue_writer.py
-```
-
-Prompts for: product_name, title, tags (comma-separated, exactly 13), description, price, category.
-
-### Batch mode (JSON file)
-
-```bash
-cat > products.json <<'EOF'
-[
-  {
-    "product_name": "UGC Creator Rate Card",
-    "title": "UGC Creator Rate Card Template | Editable Canva | Freelance Pricing Sheet",
-    "tags": ["ugc creator", "rate card template", "canva template", "freelance pricing", "pricing guide", "rate sheet", "editable template", "freelance designer", "business template", "coaching tool", "digital download", "freelance tool", "pricing template"],
-    "description": "Ready-to-edit rate card template for UGC creators to showcase pricing...",
-    "price": 7.99,
-    "category": "Digital Downloads"
-  }
-]
-EOF
-
-python scripts/queue_writer.py --file products.json
-```
-
-### List queue
-
-```bash
-python scripts/queue_writer.py --list
+./loop.sh --once                     # run one cycle and exit (testing)
+./run.sh phase1                      # brand builder only
+./run.sh phase2                      # listing generator only
+./run.sh phase4 "ProductName"        # process + stage one product
+./run.sh phase5 "ProductName"        # upload one product to Etsy
+./run.sh full "ProductName"          # phases 4 → 5 → 6 for one product
+./run.sh digest                      # send email digest now
+./run.sh watch                       # run canva watcher once
 ```
 
 ---
 
-## Manual Phase-by-Phase Execution
+## Your Ongoing Workflow
 
-For debugging or custom workflows:
+After initial setup, your only recurring task is:
+
+1. **Design product mockups in Canva**
+2. **Export 5 JPEGs → drop into your Google Drive folder**
+
+The pipeline does the rest:
+- rclone syncs the images to the VPS within 5 minutes
+- Canva watcher detects the new folder and queues the product
+- Listing content is pulled from `outputs/master.txt` (generated by Phase 2)
+- Images are processed, listing is built and validated, then uploaded to Etsy
+- SEO analysis runs after publish
+- You get a daily email digest with pipeline stats
+
+### Generating meta.json for a product
+
+After Phase 2 runs, generate the listing metadata for a specific product:
 
 ```bash
-./run.sh db-init                     # initialise database (once)
-./run.sh phase1                      # brand builder
-./run.sh phase2                      # launch executor
-./run.sh phase4 "ProductName"        # process images → build listing → validate → stage
-./run.sh phase5 "ProductName"        # upload to Etsy
-./run.sh phase6 "ProductName"        # SEO gap analysis
-./run.sh phase7                      # health dashboard
-./run.sh full "ProductName"          # phases 4 → 5 → 6 in one command
+./run.sh meta "Product Name" --price 9.99
 ```
 
----
+This writes `03_Canva_Exports/[ProductName]/meta.json` so the watcher has everything it needs when your images arrive.
 
-## Chrome Extension Integration
-
-Use `etsy_autonomous.py` to generate structured 4-part prompts for the Claude Chrome extension:
+To see all products in `master.txt`:
 
 ```bash
-./run.sh phase2-rich
-```
-
-Outputs to `outputs/master.txt` — each prompt includes:
-1. Goal and context
-2. Step-by-step browser actions
-3. Safety constraints
-4. Done checklist with proof items
-
-Copy/paste each week's prompt into the Claude Chrome extension to execute the launch plan manually or via Claude Copilot.
-
----
-
-## Local Development Setup
-
-```bash
-git clone https://github.com/khancam15/ai-etsy-product-pipeline.git
-cd ai-etsy-product-pipeline
-
-python3.12 -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-pip install pre-commit
-pre-commit install
-
-cp .env.example .env
-# fill in your API keys
-```
-
-Then run manually:
-```bash
-./run.sh phase1
-./run.sh phase2
-```
-
-Or start the loop:
-```bash
-./loop.sh
+.venv/bin/python scripts/meta_generator.py --list
 ```
 
 ---
@@ -331,8 +279,8 @@ Or start the loop:
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `queue` | Products waiting to be processed | `id`, `product_name`, `status` (pending → designed → published/failed), `title`, `tags` (JSON), `description`, `price`, `category` |
-| `listings` | Published Etsy listings (dedup index) | `product_name`, `title` (unique), `etsy_url`, `published_at` |
+| `queue` | Products waiting to be processed | `id`, `product_name`, `status` (pending → published/failed), `title`, `tags` (JSON), `description`, `price`, `category` |
+| `listings` | Published Etsy listings | `product_name`, `title` (unique), `etsy_url`, `published_at` |
 | `run_log` | Per-phase execution log | `product_name`, `phase`, `status` (success/failed), `message`, `run_at` |
 | `seo_review` | Post-publish SEO gap reports | `product_name`, `listing_title`, `missing_tags` (JSON), `gap_count`, `reviewed_at` |
 
@@ -344,10 +292,10 @@ Or start the loop:
 |-----------|-----|
 | API keys never committed | `.env` is git-ignored; only `.env.example` is tracked |
 | Secret scanning on every commit | `gitleaks` via pre-commit hook |
-| Runtime outputs git-ignored | `outputs/*`, `logs/*`, `.playwright_profile/` all excluded from git |
-| No hardcoded credentials | All secrets loaded via `python-dotenv` with absolute path |
+| Runtime outputs git-ignored | `outputs/*`, `logs/*`, `.playwright_profile/` all excluded |
+| No hardcoded credentials | All secrets loaded via `python-dotenv` |
 | Playwright session isolated | Browser profile stored in `.playwright_profile/` (git-ignored) |
-| Exit codes enforce safety | Each phase must exit 0 before proceeding — prevents cascading failures |
+| Exit codes enforce order | Each phase must exit 0 before proceeding |
 
 ---
 
@@ -355,30 +303,23 @@ Or start the loop:
 
 ### Loop not running after VPS reboot
 
-Check systemd:
 ```bash
 systemctl status etsy-pipeline
-journalctl -u etsy-pipeline -n 50
-```
-
-If not running:
-```bash
 systemctl start etsy-pipeline
 ```
 
-### Phase fails but loop keeps going
+### Phase fails mid-cycle
 
-Check `logs/loop_errors.log`:
 ```bash
 tail -f logs/loop_errors.log
 ```
 
-Phases 6 and 7 (SEO and health) are non-fatal — listing already published.
+Phases 6 and 7 are non-fatal — listing is already published if Phase 5 succeeded.
 
-### Etsy login expired
+### Etsy login session expired
 
-`.playwright_profile/` session expires over time. Re-run:
 ```bash
+# On your Mac (💻 HOST)
 python scripts/etsy_login.py
 scp -r .playwright_profile/ root@YOUR_VPS_IP:/root/ai-etsy-product-pipeline/
 systemctl restart etsy-pipeline
@@ -386,19 +327,23 @@ systemctl restart etsy-pipeline
 
 ### No pending products in queue
 
-Add products manually:
+Either drop images into Google Drive (automated path) or add manually:
+
 ```bash
-python scripts/queue_writer.py
+.venv/bin/python scripts/queue_writer.py
 ```
 
-Or in batch:
+### Google Drive not syncing
+
 ```bash
-python scripts/queue_writer.py --file products.json
+rclone sync "etsy-pipeline:YourFolderName" 03_Canva_Exports/ --log-level=INFO
+crontab -l    # verify cron is installed
 ```
 
 ### Out of API credits
 
 Phase 1 is cached — brand guide refreshes only every 7 days. To force refresh:
+
 ```bash
 rm outputs/brand_guide.md
 ./run.sh phase1

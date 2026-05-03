@@ -9,9 +9,8 @@
 #   2. Creates .env from .env.example if not present
 #   3. Creates Python virtual environment
 #   4. Installs pip dependencies
-#   5. Installs Playwright Chromium with system deps
-#   6. Initialises the SQLite database
-#   7. Sets executable bits on run.sh
+#   5. Initialises the SQLite database
+#   6. Sets executable bits on run.sh / loop.sh
 
 set -euo pipefail
 
@@ -24,9 +23,8 @@ echo "========================================"
 echo ""
 
 # 1 — Directory structure
-echo "[1/7] Creating pipeline directories..."
+echo "[1/6] Creating pipeline directories..."
 mkdir -p \
-    01_Queue \
     02_Products \
     03_Canva_Exports \
     "04_Assets/ReadyToUpload" \
@@ -36,51 +34,44 @@ mkdir -p \
 echo "      Done."
 
 # 2 — .env
-echo "[2/7] Checking .env..."
+echo "[2/6] Checking .env..."
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
     if [[ -f "$SCRIPT_DIR/.env.example" ]]; then
         cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
-        echo "      Created .env from .env.example — fill in your API keys before running the pipeline."
+        echo "      Created .env from .env.example"
+        echo "      → Fill in all API keys before starting the pipeline."
     else
-        echo "      WARNING: no .env.example found. Create .env manually with:"
-        echo "        ANTHROPIC_API_KEY=..."
-        echo "        SERPER_API_KEY=..."
-        echo "        ETSY_API_KEY=..."
+        echo "      WARNING: .env.example not found. Create .env manually."
     fi
 else
     echo "      .env already exists — skipping."
 fi
 
 # 3 — Virtual environment
-echo "[3/7] Setting up Python virtual environment..."
+echo "[3/6] Setting up Python virtual environment..."
 if [[ ! -d "$SCRIPT_DIR/.venv" ]]; then
     python3.12 -m venv "$SCRIPT_DIR/.venv"
     echo "      Created .venv with python3.12"
 else
-    echo "      .venv already exists — skipping creation."
+    echo "      .venv already exists — skipping."
 fi
 
 PYTHON="$SCRIPT_DIR/.venv/bin/python"
 PIP="$SCRIPT_DIR/.venv/bin/pip"
 
 # 4 — pip dependencies
-echo "[4/7] Installing pip dependencies..."
+echo "[4/6] Installing pip dependencies..."
 "$PIP" install --quiet --upgrade pip
 "$PIP" install --quiet -r requirements.txt
 echo "      Done."
 
-# 5 — Playwright Chromium
-echo "[5/7] Installing Playwright Chromium (with system deps)..."
-"$PYTHON" -m playwright install chromium --with-deps
-echo "      Done."
-
-# 6 — Database
-echo "[6/7] Initialising SQLite database..."
+# 5 — Database
+echo "[5/6] Initialising SQLite database..."
 "$PYTHON" scripts/db.py
 echo "      Done."
 
-# 7 — Executable bits
-echo "[7/7] Setting executable permissions..."
+# 6 — Executable bits
+echo "[6/6] Setting executable permissions..."
 chmod +x "$SCRIPT_DIR/run.sh"
 chmod +x "$SCRIPT_DIR/loop.sh"
 chmod +x "$SCRIPT_DIR/setup_vps.sh"
@@ -91,18 +82,24 @@ echo "========================================"
 echo "  Setup complete."
 echo ""
 echo "  Next steps:"
-echo "  1. Edit .env and fill in all API keys"
+echo ""
+echo "  1. Fill in .env with your API keys:"
 echo "     nano .env"
 echo ""
-echo "  2. Log into Etsy once (saves session for headless runs):"
-echo "     python scripts/etsy_login.py"
+echo "  2. One-time OAuth setup (run on your Mac, needs a browser):"
+echo "     python scripts/etsy_oauth.py    ← Etsy API tokens"
+echo "     python scripts/canva_oauth.py   ← Canva API tokens"
 echo ""
-echo "  3. Install the systemd service so the loop survives reboots:"
+echo "  3. Run pre-flight to confirm everything is connected:"
+echo "     ./run.sh check"
+echo ""
+echo "  4. Install the systemd service so the loop survives reboots:"
 echo "     cp etsy-pipeline.service /etc/systemd/system/"
 echo "     systemctl daemon-reload"
 echo "     systemctl enable etsy-pipeline"
 echo "     systemctl start etsy-pipeline"
 echo ""
-echo "  4. Check it's running:"
+echo "  5. Check it's running:"
 echo "     systemctl status etsy-pipeline"
+echo "     tail -f logs/loop.log"
 echo "========================================"

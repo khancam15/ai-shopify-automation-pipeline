@@ -80,6 +80,20 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 gap_count       INTEGER NOT NULL,
                 reviewed_at     TEXT    NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS sales (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_id  TEXT    NOT NULL UNIQUE,
+                listing_id      TEXT,
+                product_name    TEXT,
+                title           TEXT,
+                amount          REAL    NOT NULL,  -- revenue after fees
+                gross_amount    REAL    NOT NULL,  -- buyer paid
+                quantity        INTEGER NOT NULL DEFAULT 1,
+                currency        TEXT    NOT NULL DEFAULT 'USD',
+                sale_date       TEXT    NOT NULL,
+                fetched_at      TEXT    NOT NULL
+            );
         """)
 
 
@@ -120,6 +134,59 @@ def update_queue_status(item_id: int, status: str, db_path: Path = DB_PATH) -> N
             "UPDATE queue SET status = ?, updated_at = ? WHERE id = ?",
             (status, now, item_id),
         )
+
+
+def update_queue_status_by_name(product_name: str, status: str, db_path: Path = DB_PATH) -> None:
+    """Update the most recent queue row for a product by name."""
+    now = datetime.utcnow().isoformat()
+    with get_conn(db_path) as conn:
+        conn.execute(
+            """UPDATE queue SET status = ?, updated_at = ?
+               WHERE id = (
+                   SELECT id FROM queue WHERE product_name = ?
+                   ORDER BY id DESC LIMIT 1
+               )""",
+            (status, now, product_name),
+        )
+
+
+# ── Weekly pacing helpers ─────────────────────────────────────────────────────
+
+def count_published_this_week(db_path: Path = DB_PATH) -> int:
+    """Count listings published since Monday 00:00 UTC of the current week."""
+    from datetime import timedelta
+    today    = datetime.utcnow()
+    monday   = today - timedelta(days=today.weekday())
+    week_start = monday.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM listings WHERE published_at >= ?",
+            (week_start,),
+        ).fetchone()
+    return row["cnt"] if row else 0
+
+
+def hours_since_last_publish(db_path: Path = DB_PATH) -> float:
+    """Hours elapsed since the most recent listing was published. Returns 9999 if never."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT published_at FROM listings ORDER BY published_at DESC LIMIT 1"
+        ).fetchone()
+    if not row or not row["published_at"]:
+        return 9999.0
+    last = datetime.fromisoformat(row["published_at"])
+    return (datetime.utcnow() - last).total_seconds() / 3600
+
+
+def seconds_until_week_reset(db_path: Path = DB_PATH) -> int:
+    """Seconds until next Monday 00:00 UTC (when the weekly publish counter resets)."""
+    from datetime import timedelta
+    now    = datetime.utcnow()
+    days_ahead = (7 - now.weekday()) % 7 or 7          # 1-7
+    next_monday = (now + timedelta(days=days_ahead)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return max(3600, int((next_monday - now).total_seconds()))
 
 
 # ── Listings (dedupe) helpers ─────────────────────────────────────────────────
@@ -189,6 +256,88 @@ def insert_seo_review(
                 now,
             ),
         )
+
+
+# ── Sales helpers ─────────────────────────────────────────────────────────────
+
+def upsert_sale(
+    transaction_id: str,
+    listing_id: str,
+    product_name: str,
+    title: str,
+    amount: float,
+    gross_amount: float,
+    quantity: int,
+    currency: str,
+    sale_date: str,
+    db_path: Path = DB_PATH,
+) -> bool:
+    """
+    Insert a sale row. Skips silently if transaction_id already exists.
+    Returns True if a new row was inserted.
+    """
+    now = datetime.utcnow().isoformat()
+    with get_conn(db_path) as conn:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO sales
+               (transaction_id, listing_id, product_name, title,
+                amount, gross_amount, quantity, currency, sale_date, fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (transaction_id, listing_id, product_name, title,
+             amount, gross_amount, quantity, currency, sale_date, now),
+        )
+        return cur.rowcount > 0
+
+
+def get_sales_summary(days: int = 7, db_path: Path = DB_PATH) -> dict:
+    """
+    Return a summary dict for the last `days` days:
+      total_revenue, gross_revenue, order_count, units_sold,
+      best_product (name), best_product_revenue
+    """
+    from datetime import timedelta
+    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            """SELECT
+                 COALESCE(SUM(amount), 0)       AS total_revenue,
+                 COALESCE(SUM(gross_amount), 0) AS gross_revenue,
+                 COUNT(*)                        AS order_count,
+                 COALESCE(SUM(quantity), 0)      AS units_sold
+               FROM sales WHERE sale_date >= ?""",
+            (since,),
+        ).fetchone()
+
+        best = conn.execute(
+            """SELECT product_name, SUM(amount) AS rev
+               FROM sales WHERE sale_date >= ?
+               GROUP BY product_name ORDER BY rev DESC LIMIT 1""",
+            (since,),
+        ).fetchone()
+
+        all_time = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM sales"
+        ).fetchone()[0]
+
+    return {
+        "period_days":          days,
+        "total_revenue":        round(float(row["total_revenue"]), 2),
+        "gross_revenue":        round(float(row["gross_revenue"]), 2),
+        "order_count":          int(row["order_count"]),
+        "units_sold":           int(row["units_sold"]),
+        "best_product":         best["product_name"] if best else None,
+        "best_product_revenue": round(float(best["rev"]), 2) if best else 0.0,
+        "all_time_revenue":     round(float(all_time), 2),
+    }
+
+
+def get_latest_sale_date(db_path: Path = DB_PATH) -> str | None:
+    """Return the sale_date of the most recent synced transaction, or None."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT sale_date FROM sales ORDER BY sale_date DESC LIMIT 1"
+        ).fetchone()
+    return row["sale_date"] if row else None
 
 
 if __name__ == "__main__":

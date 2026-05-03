@@ -31,7 +31,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 
 from dotenv import load_dotenv
-from db import get_conn, log_run
+from db import get_conn, get_sales_summary, log_run
 
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
@@ -89,7 +89,7 @@ def _get_stats() -> dict:
 
     with get_conn() as conn:
         stats["published_week"] = conn.execute(
-            "SELECT COUNT(*) FROM run_log WHERE status='success' AND phase='etsy_uploader' AND run_at >= ?",
+            "SELECT COUNT(*) FROM run_log WHERE status='success' AND phase='etsy_api_uploader' AND run_at >= ?",
             (week_start,)
         ).fetchone()[0]
 
@@ -111,7 +111,7 @@ def _get_stats() -> dict:
 
 # ── Email builder ─────────────────────────────────────────────────────────────
 
-def _build_email(brand: dict, products: list[dict], stats: dict) -> tuple[str, str]:
+def _build_email(brand: dict, products: list[dict], stats: dict, sales: dict, weekly_limit: int = 5) -> tuple[str, str]:
     """Return (subject, html_body)."""
     date_str = datetime.utcnow().strftime("%B %d, %Y")
     subject  = f"Etsy Pipeline — Design Brief for {date_str}"
@@ -169,6 +169,15 @@ def _build_email(brand: dict, products: list[dict], stats: dict) -> tuple[str, s
     <p style="margin:4px 0 0;color:#DAA520;font-size:14px;">{tagline}</p>
   </div>
 
+  <h2 style="color:#2C3E50;margin-top:28px;">Revenue (Last 7 Days)</h2>
+  <div style="margin-bottom:8px;">
+    {pill('#27ae60', 'Net Revenue', f"${sales['total_revenue']:.2f}")}
+    {pill('#16a085', 'Orders', sales['order_count'])}
+    {pill('#2980b9', 'Units Sold', sales['units_sold'])}
+    {pill('#8e44ad', 'All-Time', f"${sales['all_time_revenue']:.2f}")}
+  </div>
+  {"<p style='font-size:13px;margin-top:6px;'>🏆 Best seller: <strong>" + sales['best_product'] + f"</strong> (${sales['best_product_revenue']:.2f})</p>" if sales['best_product'] else ""}
+
   <h2 style="color:#2C3E50;margin-top:28px;">Pipeline Health (Last 7 Days)</h2>
   <div style="margin-bottom:16px;">
     {pill('#27ae60', 'Published', stats['published_week'])}
@@ -188,14 +197,19 @@ def _build_email(brand: dict, products: list[dict], stats: dict) -> tuple[str, s
 
   {products_section}
 
-  <h2 style="color:#2C3E50;margin-top:32px;">Your Checklist Today</h2>
-  <ol style="font-size:14px;line-height:2;">
-    <li>Pick one product from the table above</li>
-    <li>Design 5 mockup images in Canva using the brand colors/fonts</li>
-    <li>Export as JPG → upload to VPS: <code>02_Products/[ProductName]/Mockups/</code></li>
-    <li>SSH into VPS → run <code>python scripts/queue_writer.py</code></li>
-    <li>Pipeline uploads to Etsy automatically on the next cycle</li>
-  </ol>
+  <h2 style="color:#2C3E50;margin-top:32px;">Pipeline Status</h2>
+  <p style="font-size:14px;color:#27ae60;">✦ Fully autonomous — no manual action needed.</p>
+  <ul style="font-size:14px;line-height:2;">
+    <li>Phase 3 designs 6 mockup images per product (Canva MCP)</li>
+    <li>Phase 3B creates the actual template buyers download (Canva MCP)</li>
+    <li>Phase 4 processes images and builds the listing</li>
+    <li>Phase 5 publishes to Etsy automatically (up to {weekly_limit}/week)</li>
+    <li>Phase 6 runs SEO gap analysis after each publish</li>
+  </ul>
+  <p style="font-size:13px;color:#888;">
+    To adjust pacing: edit <code>WEEKLY_PUBLISH_LIMIT</code> and
+    <code>PUBLISH_COOLDOWN_HOURS</code> in your <code>.env</code> file.
+  </p>
 
   <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
   <p style="color:#aaa;font-size:11px;text-align:center;">
@@ -222,7 +236,9 @@ def send_digest() -> None:
     products = _parse_products(master_text)
     stats    = _get_stats()
 
-    subject, html_body = _build_email(brand, products, stats)
+    weekly_limit = int(os.getenv("WEEKLY_PUBLISH_LIMIT", "5"))
+    sales        = get_sales_summary(days=7)
+    subject, html_body = _build_email(brand, products, stats, sales, weekly_limit)
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject

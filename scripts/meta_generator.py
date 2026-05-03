@@ -115,9 +115,6 @@ def generate(product_name: str, price: float) -> Path:
     print(f"  Title:  {title[:80]}...")
     print(f"  Tags:   {', '.join(tags[:5])}...")
     print(f"  Price:  ${price}")
-    print(f"\n  Next: drop 5 mockup JPEGs into this folder in Dropbox/Drive:")
-    print(f"  etsy-pipeline/{product_name}/")
-    print(f"  The watcher will pick them up automatically.\n")
     return out_file
 
 

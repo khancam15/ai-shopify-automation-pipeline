@@ -2,16 +2,22 @@
 # run.sh — VPS entry point for the Etsy pipeline
 #
 # Usage:
-#   ./run.sh db-init               — initialise SQLite database (run once on new VPS)
-#   ./run.sh phase1                — Brand Builder crew (writes outputs/brand_guide.md)
-#   ./run.sh phase2                — Launch Executor   (writes outputs/master.txt)
-#   ./run.sh phase2-rich           — Autonomous Executor (richer prompt engine)
-#   ./run.sh phase4 <product>      — Process images → build listing → validate → stage
-#   ./run.sh phase5 <product>      — Upload staged listing to Etsy (Playwright)
-#   ./run.sh phase6 <product>      — Post-publish SEO gap analysis
-#   ./run.sh phase7                — Daily health dashboard (stdout for n8n)
-#   ./run.sh all                   — Full pipeline: phase1 → phase2
-#   ./run.sh full <product>        — Phases 4 → 5 → 6 for one product
+#   ./run.sh db-init                    — initialise SQLite database (run once on new VPS)
+#   ./run.sh sales [--full]             — sync Etsy sales & revenue to SQLite
+#   ./run.sh phase1                     — Brand Builder crew (writes outputs/brand_guide.md)
+#   ./run.sh phase2                     — Launch Executor (writes outputs/master.txt)
+#   ./run.sh phase2-rich                — Autonomous Executor (richer prompt engine)
+#   ./run.sh phase3 <product> [--price] — Canva image generator (6 mockups via Claude + Canva MCP)
+#   ./run.sh phase3b <product> [--price]— Canva product creator (actual template buyers download)
+#   ./run.sh phase4 <product>           — Process images → build listing → validate → stage
+#   ./run.sh canva-auth                 — One-time Canva API OAuth setup (saves tokens to .env)
+#   ./run.sh etsy-auth                  — One-time Etsy API OAuth setup (saves tokens to .env)
+#   ./run.sh phase5 <product>           — Upload staged listing to Etsy via API
+#   ./run.sh phase6 <product>           — SEO gap analysis + auto-apply best tags to live listing
+#   ./run.sh phase7                     — Daily health dashboard
+#   ./run.sh all                        — Full pipeline: phase1 → phase2
+#   ./run.sh design <product> [--price] — Alias for phase3
+#   ./run.sh full <product>             — Full autonomous: phase3 → 3B → 4 → 5 → 6
 #
 # Cron examples:
 #   0 6 * * * /path/to/project/run.sh phase2 >> /path/to/project/outputs/cron.log 2>&1
@@ -52,18 +58,17 @@ case "$PHASE" in
         echo "[run.sh] Initialising database"
         "$PYTHON" scripts/db.py
         ;;
+    preflight|check)
+        echo "[run.sh] Running pre-flight credential check"
+        "$PYTHON" scripts/preflight.py
+        ;;
     digest)
         echo "[run.sh] Sending email digest now"
         "$PYTHON" scripts/email_digest.py
         ;;
-    watch)
-        echo "[run.sh] Checking Canva exports inbox"
-        "$PYTHON" scripts/canva_watcher.py
-        ;;
-    meta)
-        _require_product
-        echo "[run.sh] Generating meta.json for: $PRODUCT"
-        "$PYTHON" scripts/meta_generator.py "$PRODUCT" ${3:+--price "$3"}
+    sales)
+        echo "[run.sh] Syncing sales & revenue from Etsy"
+        "$PYTHON" scripts/sales_tracker.py ${2:+$2}
         ;;
     phase1)
         echo "[run.sh] Starting Phase 1 — Brand Builder"
@@ -77,6 +82,16 @@ case "$PHASE" in
         echo "[run.sh] Starting Phase 2 (rich) — Autonomous Executor"
         "$PYTHON" scripts/etsy_autonomous.py
         ;;
+    phase3|design)
+        _require_product
+        echo "[run.sh] Phase 3 — Canva Image Generator: $PRODUCT"
+        "$PYTHON" scripts/canva_image_generator.py "$PRODUCT" ${3:+--price "$3"}
+        ;;
+    phase3b|product)
+        _require_product
+        echo "[run.sh] Phase 3B — Canva Product Creator: $PRODUCT"
+        "$PYTHON" scripts/canva_product_creator.py "$PRODUCT" ${3:+--price "$3"}
+        ;;
     phase4)
         _require_product
         echo "[run.sh] Phase 4 — Process images, build listing, validate, stage: $PRODUCT"
@@ -85,10 +100,18 @@ case "$PHASE" in
         "$PYTHON" scripts/pre_upload_validator.py "$PRODUCT"
         "$PYTHON" scripts/file_organizer.py "$PRODUCT"
         ;;
+    canva-auth)
+        echo "[run.sh] Starting Canva API OAuth setup (💻 HOST only)"
+        "$PYTHON" scripts/canva_oauth.py
+        ;;
+    etsy-auth)
+        echo "[run.sh] Starting Etsy API OAuth setup (💻 HOST only)"
+        "$PYTHON" scripts/etsy_oauth.py
+        ;;
     phase5)
         _require_product
-        echo "[run.sh] Phase 5 — Upload to Etsy: $PRODUCT"
-        "$PYTHON" scripts/etsy_uploader.py "$PRODUCT"
+        echo "[run.sh] Phase 5 — Upload to Etsy via API: $PRODUCT"
+        "$PYTHON" scripts/etsy_api_uploader.py "$PRODUCT"
         ;;
     phase6)
         _require_product
@@ -106,16 +129,18 @@ case "$PHASE" in
         ;;
     full)
         _require_product
-        echo "[run.sh] Full product pipeline: Phase 4 → 5 → 6 for: $PRODUCT"
+        echo "[run.sh] Full autonomous pipeline: Phase 3 → 3B → 4 → 5 → 6 for: $PRODUCT"
+        "$PYTHON" scripts/canva_image_generator.py "$PRODUCT" ${3:+--price "$3"}
+        "$PYTHON" scripts/canva_product_creator.py "$PRODUCT" ${3:+--price "$3"}
         "$PYTHON" scripts/image_processor.py "$PRODUCT"
         "$PYTHON" scripts/listing_builder.py "$PRODUCT"
         "$PYTHON" scripts/pre_upload_validator.py "$PRODUCT"
         "$PYTHON" scripts/file_organizer.py "$PRODUCT"
-        "$PYTHON" scripts/etsy_uploader.py "$PRODUCT"
-        "$PYTHON" scripts/seo_analyzer.py "$PRODUCT"
+        "$PYTHON" scripts/etsy_api_uploader.py "$PRODUCT"
+        "$PYTHON" scripts/seo_analyzer.py "$PRODUCT" || true
         ;;
     *)
-        echo "Usage: $0 {db-init|phase1|phase2|phase2-rich|phase4|phase5|phase6|phase7|all|full} [product_name]"
+        echo "Usage: $0 {db-init|digest|canva-auth|etsy-auth|phase1|phase2|phase2-rich|phase3|phase4|phase5|phase6|phase7|all|full|design} [product_name]"
         exit 1
         ;;
 esac

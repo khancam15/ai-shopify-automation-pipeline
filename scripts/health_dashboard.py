@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from db import get_conn, DB_PATH
+from db import get_conn, get_sales_summary, DB_PATH
 
 _ROOT = Path(__file__).resolve().parent.parent
 STUCK_THRESHOLD_HOURS = 48
@@ -47,7 +47,7 @@ def generate_report() -> str:
 
         # Published this week
         published = conn.execute(
-            "SELECT COUNT(*) FROM run_log WHERE status = 'success' AND phase = 'etsy_uploader' AND run_at >= ?",
+            "SELECT COUNT(*) FROM run_log WHERE status = 'success' AND phase = 'etsy_api_uploader' AND run_at >= ?",
             (week_start,),
         ).fetchone()[0]
 
@@ -80,11 +80,24 @@ def generate_report() -> str:
             "SELECT COUNT(*) FROM listings"
         ).fetchone()[0]
 
+    # Sales & revenue
+    sales = get_sales_summary(days=7)
+
     lines.append("=" * 50)
     lines.append("  AI Etsy Pipeline — Daily Health Dashboard")
     lines.append(f"  Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
     lines.append("=" * 50)
     lines.append("")
+    lines.append("  ── Revenue (last 7 days) ──────────────────")
+    lines.append(f"  Net revenue:          ${sales['total_revenue']:.2f}")
+    lines.append(f"  Gross revenue:        ${sales['gross_revenue']:.2f}")
+    lines.append(f"  Orders:               {sales['order_count']}")
+    lines.append(f"  Units sold:           {sales['units_sold']}")
+    if sales["best_product"]:
+        lines.append(f"  Best product:         {sales['best_product']} (${sales['best_product_revenue']:.2f})")
+    lines.append(f"  All-time revenue:     ${sales['all_time_revenue']:.2f}")
+    lines.append("")
+    lines.append("  ── Pipeline ───────────────────────────────")
     lines.append(f"  Published this week:  {published}")
     lines.append(f"  Failed this week:     {failed}")
     lines.append(f"  Failure rate:         {failure_rate}")

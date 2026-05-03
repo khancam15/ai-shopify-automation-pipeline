@@ -1,28 +1,53 @@
 #!/usr/bin/env bash
 # loop.sh — Autonomous pipeline loop for VPS
 #
-# Runs one full product cycle per iteration, then sleeps before the next.
-# Each phase must exit 0 before the next phase starts — any failure halts
-# the current cycle, logs the error, and waits for the next scheduled run.
+# Two operating modes per cycle:
+#
+#   BUILD mode   — under weekly publish limit + cooldown expired
+#                  Runs: Phase 1 (7-day) → Phase 2 (7-day) → Phase 3 (design next product)
+#                        → Phase 4 → Phase 5 (publish) → Phase 6 → Phase 7
+#                  Sleeps: SLEEP seconds (default 3600)
+#
+#   DESIGN mode  — under weekly limit but cooldown still active
+#                  Runs: Phase 1 (7-day) → Phase 2 (7-day) → Phase 3 (design next product)
+#                  Skips: Phase 4 / 5 / 6  (too soon to publish again)
+#                  Sleeps: SLEEP seconds
+#
+#   MAINTAIN mode — weekly publish limit reached
+#                  Runs: Phase 6 (SEO on all published listings) → Phase 7
+#                  Sleeps: until Monday 00:00 UTC (weekly reset)
+#
+# Phases 1 & 2 each run at most once every 7 days (content & brand refresh cadence).
+# Phase 3 runs every cycle in build/design mode — designs one new product per hour.
+# Phase 5 is gated by WEEKLY_PUBLISH_LIMIT (default 5) and PUBLISH_COOLDOWN_HOURS (default 24).
+#
+# Configure in .env:
+#   WEEKLY_PUBLISH_LIMIT=5        max listings per Mon–Sun week
+#   PUBLISH_COOLDOWN_HOURS=24     min hours between consecutive publishes
 #
 # Usage:
-#   ./loop.sh                    — run forever (default 3600s sleep between cycles)
-#   ./loop.sh --once             — run exactly one cycle then exit
+#   ./loop.sh                    — run forever
+#   ./loop.sh --once             — run one cycle then exit
 #   SLEEP=7200 ./loop.sh         — override sleep interval
 #
 # Logs:
-#   logs/loop.log                — all stdout/stderr from every cycle
-#   logs/loop_errors.log         — failures only (easier to scan)
+#   logs/loop.log                — all stdout/stderr
+#   logs/loop_errors.log         — failures only
 #
-# Stop the loop:
-#   kill $(cat logs/loop.pid)
-#   — or — Ctrl+C if running in foreground
+# Stop: kill $(cat logs/loop.pid)  or Ctrl+C
 
 set -uo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Load .env so WEEKLY_PUBLISH_LIMIT and PUBLISH_COOLDOWN_HOURS are available
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    set -o allexport
+    source "$SCRIPT_DIR/.env"
+    set +o allexport
+fi
 
 PYTHON="$SCRIPT_DIR/.venv/bin/python"
 LOG_DIR="$SCRIPT_DIR/logs"
@@ -31,6 +56,10 @@ ERR_FILE="$LOG_DIR/loop_errors.log"
 PID_FILE="$LOG_DIR/loop.pid"
 SLEEP="${SLEEP:-3600}"
 RUN_ONCE="${1:-}"
+
+# Publishing pacing — configurable via .env
+WEEKLY_LIMIT="${WEEKLY_PUBLISH_LIMIT:-5}"
+COOLDOWN_HOURS="${PUBLISH_COOLDOWN_HOURS:-24}"
 
 # ── Guards ────────────────────────────────────────────────────────────────────
 mkdir -p "$LOG_DIR"
@@ -46,6 +75,14 @@ if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
 fi
 
 echo $$ > "$PID_FILE"
+
+# ── Pre-flight credential check ───────────────────────────────────────────────
+# Validates + auto-refreshes Etsy and Canva tokens before doing any real work.
+# Exits the loop immediately if Etsy credentials are broken (non-recoverable).
+if ! "$PYTHON" scripts/preflight.py; then
+    echo "[loop] Pre-flight failed — fix credentials and restart. Exiting." >&2
+    exit 1
+fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 _ts()  { date -u '+%Y-%m-%d %H:%M:%S UTC'; }
@@ -93,65 +130,193 @@ _cleanup() {
 }
 trap _cleanup INT TERM EXIT
 
+# ── Helpers — file age check ──────────────────────────────────────────────────
+_file_age_secs() {
+    local f="$1"
+    [[ -f "$f" ]] || { echo 999999; return; }
+    local mod
+    mod=$(date -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+    echo $(( $(date +%s) - mod ))
+}
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 _log "========================================"
 _log "Autonomous loop starting. PID=$$"
-_log "Sleep interval: ${SLEEP}s between cycles"
+_log "Weekly publish limit : ${WEEKLY_LIMIT} listings/week"
+_log "Publish cooldown     : ${COOLDOWN_HOURS}h between listings"
+_log "Sleep interval       : ${SLEEP}s"
 _log "Logs: $LOG_FILE"
 _log "========================================"
 
 CYCLE=0
 LAST_DIGEST_DATE=""
+WEEK_LIMIT_SECS=$((7 * 24 * 3600))
 
 while true; do
     CYCLE=$((CYCLE + 1))
     _log "──────── CYCLE $CYCLE START ────────"
 
-    # ── Daily email digest ────────────────────────────────────────────────────
-    # Sends once per calendar day regardless of how many cycles run.
+    # ── Daily tasks (run once per calendar day) ───────────────────────────────
     TODAY=$(date -u '+%Y-%m-%d')
     if [[ "$TODAY" != "$LAST_DIGEST_DATE" ]]; then
+        _run_phase "Sales sync"   "$PYTHON" scripts/sales_tracker.py \
+            || _err "Sales sync failed — non-fatal."
         _run_phase "Email digest" "$PYTHON" scripts/email_digest.py \
             || _err "Email digest failed — non-fatal."
         LAST_DIGEST_DATE="$TODAY"
     fi
 
-    # ── Canva watcher ─────────────────────────────────────────────────────────
-    # Checks 03_Canva_Exports/ for new product folders synced from Dropbox/Drive.
-    # Non-fatal — if no new products found it logs and moves on.
-    _run_phase "Canva watcher" "$PYTHON" scripts/canva_watcher.py \
-        || _err "Canva watcher failed — non-fatal."
+    # ── Check weekly publish budget ───────────────────────────────────────────
+    PUBLISHED_THIS_WEEK=$("$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF'
+import sys; sys.path.insert(0, 'scripts')
+from db import count_published_this_week
+print(count_published_this_week())
+PYEOF
+)
+    _log "Weekly budget: ${PUBLISHED_THIS_WEEK}/${WEEKLY_LIMIT} listings published this week"
 
-    # ── Phase 1: Brand Builder ────────────────────────────────────────────────
-    # Only regenerates brand_guide.md if it's older than 7 days, to avoid
-    # burning Serper + Anthropic credits on every hourly cycle.
-    BRAND_GUIDE="$SCRIPT_DIR/outputs/brand_guide.md"
-    BRAND_AGE_LIMIT=$((7 * 24 * 3600))
+    # ── MAINTAIN MODE — weekly limit reached ─────────────────────────────────
+    if [[ "$PUBLISHED_THIS_WEEK" -ge "$WEEKLY_LIMIT" ]]; then
+        _log "━━━ MAINTAIN MODE — limit reached ($PUBLISHED_THIS_WEEK/$WEEKLY_LIMIT) ━━━"
+        _log "Running SEO analysis on published listings..."
 
-    RUN_PHASE1=true
-    if [[ -f "$BRAND_GUIDE" ]]; then
-        BRAND_MOD=$(date -r "$BRAND_GUIDE" +%s 2>/dev/null || stat -c %Y "$BRAND_GUIDE" 2>/dev/null || echo 0)
-        NOW=$(date +%s)
-        AGE=$(( NOW - BRAND_MOD ))
-        if [[ $AGE -lt $BRAND_AGE_LIMIT ]]; then
-            _log "Phase 1 skipped — brand_guide.md is $((AGE / 3600))h old (refreshes after 168h)"
-            RUN_PHASE1=false
+        # SEO analysis + auto-apply on published listings
+        # Processes up to 10 listings per maintain cycle (oldest-SEO-reviewed first)
+        # to avoid Etsy API rate limits while still improving the full catalogue over time.
+        "$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF' || _err "Maintain SEO scan failed — non-fatal."
+import sys, subprocess
+sys.path.insert(0, 'scripts')
+from db import get_conn
+
+# Prioritise listings whose SEO was reviewed longest ago (or never reviewed)
+with get_conn() as c:
+    rows = c.execute("""
+        SELECT l.product_name
+        FROM listings l
+        LEFT JOIN (
+            SELECT product_name, MAX(reviewed_at) AS last_reviewed
+            FROM seo_review GROUP BY product_name
+        ) s ON l.product_name = s.product_name
+        ORDER BY COALESCE(s.last_reviewed, '1970-01-01') ASC
+        LIMIT 10
+    """).fetchall()
+
+for r in rows:
+    try:
+        result = subprocess.run(
+            [sys.executable, 'scripts/seo_analyzer.py', r['product_name']],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.stdout: print(result.stdout.strip())
+        if result.returncode != 0 and result.stderr:
+            print(f"  [maintain] SEO error for {r['product_name']}: {result.stderr[:200]}")
+    except Exception as e:
+        print(f"  [maintain] SEO scan failed for {r['product_name']}: {e}")
+PYEOF
+
+        _run_phase "Phase 7 (health dashboard)" "$PYTHON" scripts/health_dashboard.py \
+            || _err "Phase 7 failed — non-fatal."
+
+        # Sleep until Monday 00:00 UTC (weekly counter resets)
+        SECS_TO_RESET=$("$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF'
+import sys; sys.path.insert(0, 'scripts')
+from db import seconds_until_week_reset
+print(seconds_until_week_reset())
+PYEOF
+)
+        HOURS_TO_RESET=$(( SECS_TO_RESET / 3600 ))
+        _log "Weekly limit reached — maintain mode active. Next build cycle in ~${HOURS_TO_RESET}h (Monday reset)."
+        _log "──────── CYCLE $CYCLE COMPLETE — maintain mode ────────"
+
+        if [[ "$RUN_ONCE" == "--once" ]]; then
+            _log "Run-once mode — exiting."
+            exit 0
         fi
+        sleep "$SECS_TO_RESET"
+        continue
     fi
 
-    if [[ "$RUN_PHASE1" == true ]]; then
+    # ── BUILD / DESIGN MODE ───────────────────────────────────────────────────
+    # Phase 1: Brand Builder — runs once every 7 days
+    BRAND_AGE=$(_file_age_secs "$SCRIPT_DIR/outputs/brand_guide.md")
+    if [[ "$BRAND_AGE" -gt "$WEEK_LIMIT_SECS" ]]; then
         _run_phase "Phase 1 (brand builder)" "$PYTHON" scripts/etsy_brand_crew.py \
             || { _log "Cycle $CYCLE aborted at phase 1."; _sleep_or_exit; continue; }
+    else
+        _log "Phase 1 skipped — brand_guide.md is $((BRAND_AGE / 3600))h old (refreshes after 168h)"
     fi
 
-    # ── Phase 2: Launch Executor ──────────────────────────────────────────────
-    _run_phase "Phase 2 (launch executor)" "$PYTHON" scripts/etsy_launch_executor.py \
-        || { _log "Cycle $CYCLE aborted at phase 2."; _sleep_or_exit; continue; }
+    # Phase 2: Listing content — runs once every 7 days (same cadence as brand)
+    MASTER_AGE=$(_file_age_secs "$SCRIPT_DIR/outputs/master.txt")
+    if [[ "$MASTER_AGE" -gt "$WEEK_LIMIT_SECS" ]]; then
+        _run_phase "Phase 2 (launch executor)" "$PYTHON" scripts/etsy_launch_executor.py \
+            || { _log "Cycle $CYCLE aborted at phase 2."; _sleep_or_exit; continue; }
+    else
+        _log "Phase 2 skipped — master.txt is $((MASTER_AGE / 3600))h old (refreshes after 168h)"
+    fi
 
-    # ── Pick next queued product ──────────────────────────────────────────────
-    PRODUCT=$("$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF'
-import sys
+    # Phase 3: Canva image generation — picks next undesigned product from master.txt
+    DESIGN_PRODUCT=$("$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF'
+import sys, re
+from pathlib import Path
 sys.path.insert(0, 'scripts')
+outputs = Path('outputs')
+master  = outputs / 'master.txt'
+if not master.exists():
+    sys.exit(0)
+text  = master.read_text(encoding='utf-8')
+names = re.findall(r'^\d+\.\s+(.+?)\s+\(\$[\d.]+\)', text, re.MULTILINE)
+for name in names:
+    if not (outputs / f'{name.replace(" ", "_")}_canva.json').exists():
+        print(name)
+        break
+PYEOF
+)
+
+    if [[ -n "$DESIGN_PRODUCT" ]]; then
+        _log "Phase 3 — designing mockups: $DESIGN_PRODUCT"
+        _run_phase "Phase 3 (canva image generator)" \
+            "$PYTHON" scripts/canva_image_generator.py "$DESIGN_PRODUCT" \
+            || _err "Phase 3 failed for: $DESIGN_PRODUCT — non-fatal, will retry next cycle."
+
+        # Phase 3B: create the actual digital product (template) for the same product
+        # Runs immediately after mockups — only if Phase 3 succeeded (product record exists)
+        PRODUCT_RECORD="$SCRIPT_DIR/outputs/${DESIGN_PRODUCT// /_}_product.json"
+        if [[ ! -f "$PRODUCT_RECORD" ]]; then
+            _log "Phase 3B — creating digital product template: $DESIGN_PRODUCT"
+            _run_phase "Phase 3B (canva product creator)" \
+                "$PYTHON" scripts/canva_product_creator.py "$DESIGN_PRODUCT" \
+                || _err "Phase 3B failed for: $DESIGN_PRODUCT — non-fatal, listing will go live without attached template file."
+        else
+            _log "Phase 3B skipped — product template already exists for: $DESIGN_PRODUCT"
+        fi
+    else
+        _log "Phase 3/3B — all products in master.txt have designs. Waiting for next Phase 2 refresh."
+    fi
+
+    # ── Check publish cooldown ────────────────────────────────────────────────
+    COOLDOWN_OK=$("$PYTHON" - "$COOLDOWN_HOURS" 2>>"$LOG_FILE" <<'PYEOF'
+import sys; sys.path.insert(0, 'scripts')
+from db import hours_since_last_publish
+cooldown = float(sys.argv[1])
+elapsed  = hours_since_last_publish()
+print('yes' if elapsed >= cooldown else f'no:{elapsed:.1f}')
+PYEOF
+)
+
+    if [[ "$COOLDOWN_OK" != "yes" ]]; then
+        ELAPSED="${COOLDOWN_OK#no:}"
+        WAIT_H=$(echo "$COOLDOWN_HOURS $ELAPSED" | awk '{printf "%.1f", $1 - $2}')
+        _log "━━━ DESIGN MODE — cooldown active (${ELAPSED}h elapsed, need ${COOLDOWN_HOURS}h) ━━━"
+        _log "Designs are being generated. Publishing resumes in ~${WAIT_H}h."
+        _log "──────── CYCLE $CYCLE COMPLETE — design mode ────────"
+        _sleep_or_exit
+        continue
+    fi
+
+    # ── BUILD MODE — cooldown cleared, publish next pending product ───────────
+    PRODUCT=$("$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF'
+import sys; sys.path.insert(0, 'scripts')
 from db import get_queue_items
 rows = get_queue_items('pending')
 print(rows[0]['product_name'] if rows else '')
@@ -159,40 +324,39 @@ PYEOF
 )
 
     if [[ -z "$PRODUCT" ]]; then
-        _log "No pending products in queue — nothing to upload this cycle."
+        _log "No pending products ready to publish this cycle."
         _sleep_or_exit
         continue
     fi
 
-    _log "Next product: $PRODUCT"
+    _log "━━━ BUILD MODE — publishing: $PRODUCT ━━━"
 
-    # ── Phase 4: Process + Stage ──────────────────────────────────────────────
-    _run_phase "Phase 4.1 (image processor)"      "$PYTHON" scripts/image_processor.py     "$PRODUCT" \
+    # Phase 4: Process + Stage
+    _run_phase "Phase 4.1 (image processor)"  "$PYTHON" scripts/image_processor.py      "$PRODUCT" \
         || { _log "Cycle $CYCLE aborted at phase 4.1."; _sleep_or_exit; continue; }
 
-    _run_phase "Phase 4.2 (listing builder)"      "$PYTHON" scripts/listing_builder.py     "$PRODUCT" \
+    _run_phase "Phase 4.2 (listing builder)"  "$PYTHON" scripts/listing_builder.py      "$PRODUCT" \
         || { _log "Cycle $CYCLE aborted at phase 4.2."; _sleep_or_exit; continue; }
 
-    _run_phase "Phase 4.3 (validator)"            "$PYTHON" scripts/pre_upload_validator.py "$PRODUCT" \
-        || { _log "Cycle $CYCLE aborted at phase 4.3 — listing failed validation."; _sleep_or_exit; continue; }
+    _run_phase "Phase 4.3 (validator)"        "$PYTHON" scripts/pre_upload_validator.py  "$PRODUCT" \
+        || { _log "Cycle $CYCLE aborted at phase 4.3 — validation failed."; _sleep_or_exit; continue; }
 
-    _run_phase "Phase 4.5 (file organizer)"       "$PYTHON" scripts/file_organizer.py      "$PRODUCT" \
+    _run_phase "Phase 4.5 (file organizer)"   "$PYTHON" scripts/file_organizer.py       "$PRODUCT" \
         || { _log "Cycle $CYCLE aborted at phase 4.5."; _sleep_or_exit; continue; }
 
-    # ── Phase 5: Upload to Etsy ───────────────────────────────────────────────
-    _run_phase "Phase 5 (etsy uploader)"          "$PYTHON" scripts/etsy_uploader.py       "$PRODUCT" \
+    # Phase 5: Publish to Etsy via API
+    _run_phase "Phase 5 (etsy api uploader)"  "$PYTHON" scripts/etsy_api_uploader.py    "$PRODUCT" \
         || { _log "Cycle $CYCLE aborted at phase 5."; _sleep_or_exit; continue; }
 
-    # ── Phase 6: SEO Analysis (non-fatal) ────────────────────────────────────
-    # Listing is already published at this point so a failure here is safe to skip.
-    _run_phase "Phase 6 (seo analyzer)"           "$PYTHON" scripts/seo_analyzer.py        "$PRODUCT" \
-        || _err "Phase 6 failed — listing is live, SEO report skipped."
+    # Phase 6: SEO analysis on the new listing (non-fatal)
+    _run_phase "Phase 6 (seo analyzer)"       "$PYTHON" scripts/seo_analyzer.py         "$PRODUCT" \
+        || _err "Phase 6 failed — listing is live, SEO skipped."
 
-    # ── Phase 7: Health Dashboard (non-fatal) ────────────────────────────────
-    _run_phase "Phase 7 (health dashboard)"       "$PYTHON" scripts/health_dashboard.py \
+    # Phase 7: Health dashboard
+    _run_phase "Phase 7 (health dashboard)"   "$PYTHON" scripts/health_dashboard.py \
         || _err "Phase 7 failed — non-fatal."
 
-    _log "──────── CYCLE $CYCLE COMPLETE — product: $PRODUCT ────────"
+    _log "──────── CYCLE $CYCLE COMPLETE — published: $PRODUCT (${PUBLISHED_THIS_WEEK+1}/${WEEKLY_LIMIT} this week) ────────"
 
     _sleep_or_exit
 done

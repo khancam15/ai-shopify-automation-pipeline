@@ -22,6 +22,26 @@ from db import get_conn, DB_PATH, log_run
 
 _ROOT       = Path(__file__).resolve().parent.parent
 ASSETS_DIR  = _ROOT / "04_Assets" / "ReadyToUpload"
+INBOX_DIR   = _ROOT / "03_Canva_Exports"
+
+
+def _load_product_extras(product_name: str) -> dict:
+    """
+    Load template_link and product_pdf from meta.json (written by Phase 3B).
+    Returns a dict with those keys (empty strings if not found).
+    """
+    meta_file = INBOX_DIR / product_name / "meta.json"
+    if not meta_file.exists():
+        return {"template_link": "", "product_pdf": ""}
+
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        return {
+            "template_link": meta.get("template_link", ""),
+            "product_pdf":   meta.get("product_pdf", ""),
+        }
+    except Exception:
+        return {"template_link": "", "product_pdf": ""}
 
 
 def build_listing_payload(queue_id: int) -> dict:
@@ -31,9 +51,10 @@ def build_listing_payload(queue_id: int) -> dict:
     Execution steps:
       1. Fetch the queue row by ID — raises if not found
       2. Parse the tags JSON string back to a list
-      3. Assemble the payload with all fields Playwright needs
-      4. Write listing.json to 04_Assets/ReadyToUpload/[ProductName]/
-      5. Return the payload dict for downstream use
+      3. Load template_link + product_pdf from meta.json (Phase 3B output)
+      4. Assemble the full payload
+      5. Write listing.json to 04_Assets/ReadyToUpload/[ProductName]/
+      6. Return the payload dict for downstream use
     """
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM queue WHERE id = ?", (queue_id,)).fetchone()
@@ -44,14 +65,26 @@ def build_listing_payload(queue_id: int) -> dict:
     tags: list[str] = json.loads(row["tags"])
     product_name: str = row["product_name"]
 
+    # Pull in Phase 3B extras (template link + PDF path)
+    extras = _load_product_extras(product_name)
+    if extras["template_link"]:
+        print(f"  [4.2] Template link found — embedding in payload")
+    if extras["product_pdf"]:
+        print(f"  [4.2] Product PDF found: {Path(extras['product_pdf']).name}")
+
+    # Use description from queue row (Phase 3B already injected the template link there)
+    description = row["description"]
+
     payload = {
-        "queue_id":     queue_id,
-        "product_name": product_name,
-        "title":        row["title"],
-        "tags":         tags,
-        "description":  row["description"],
-        "price":        row["price"],
-        "category":     row["category"],
+        "queue_id":      queue_id,
+        "product_name":  product_name,
+        "title":         row["title"],
+        "tags":          tags,
+        "description":   description,
+        "price":         row["price"],
+        "category":      row["category"],
+        "template_link": extras["template_link"],
+        "digital_file":  extras["product_pdf"],   # path to PDF for Etsy file upload
     }
 
     out_dir = ASSETS_DIR / product_name

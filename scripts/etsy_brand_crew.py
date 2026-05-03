@@ -84,7 +84,7 @@ _require_env("SERPER_API_KEY")
 OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-MODEL = "claude-haiku-4-5-20251001"   # fastest / most cost-efficient for agentic loops
+MODEL = "claude-haiku-4-5"   # fastest / most cost-efficient for agentic loops
 
 # ─── TOOLS ───────────────────────────────────────────────────────────────────
 # SerperDevTool fires a real Google/Etsy search on every agent tool call.
@@ -419,7 +419,7 @@ if __name__ == "__main__":
     print(f"{'─'*60}\n")
 
     try:
-        result = brand_crew.kickoff()
+        result = brand_crew.kickoff()  # type: ignore
         log_run("brand_builder", "etsy_brand_crew", "success", "brand_guide.md written")
     except Exception as exc:
         log_run("brand_builder", "etsy_brand_crew", "failed", str(exc))

@@ -83,7 +83,7 @@ def _require_env(key: str) -> str:
 console = Console()
 client = anthropic.Anthropic(api_key=_require_env("ANTHROPIC_API_KEY"))
 
-MODEL          = "claude-haiku-4-5-20251001"  # prompt-generation model (fast, cost-efficient)
+MODEL          = "claude-haiku-4-5"  # prompt-generation model (fast, cost-efficient)
 BRAND_GUIDES   = (Path("outputs/brand_guide.md"), Path("brand_guide.md"))
 STATE_FILE     = Path("outputs/executor_state.json")
 OUTPUTS_DIR    = Path("outputs")
@@ -202,7 +202,7 @@ def execute_task(
     response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
         max_tokens=1500,
-        system=f"""You are an autonomous Etsy product content generator for The Freelance Command Center.
+        system=f"""You are an autonomous Etsy product content generator for Creator Kit.
 
 Brand guide context:
 {brand_guide[:2000]}
@@ -325,7 +325,7 @@ def run_feedback_loop(brand_guide: str, state: dict) -> dict:
     response = call_with_retry(lambda: client.messages.create(
         model=MODEL,
         max_tokens=800,
-        system=f"""You are an Etsy SEO optimization agent for The Freelance Command Center.
+        system=f"""You are an Etsy SEO optimization agent for Creator Kit.
 Brand guide context:
 {brand_guide[:2000]}
 

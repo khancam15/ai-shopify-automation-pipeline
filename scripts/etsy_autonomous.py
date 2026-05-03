@@ -50,6 +50,7 @@ import os
 import time
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 
 import anthropic
 from dotenv import load_dotenv
@@ -72,7 +73,7 @@ load_dotenv(_ENV_FILE)
 console = Console()
 client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-MODEL               = "claude-haiku-4-5-20251001"
+MODEL               = "claude-haiku-4-5"
 _ROOT               = Path(__file__).resolve().parent.parent
 BRAND_FILES         = (_ROOT / "outputs" / "brand_guide.md", _ROOT / "brand_guide.md")
 STATE_FILE          = _ROOT / "outputs" / "executor_state.json"
@@ -110,7 +111,7 @@ def generate_listing_content(task: str, guide: str, week: str) -> str:
         model=MODEL,
         max_tokens=2000,
         system=(
-            "You are an autonomous Etsy product content generator for The Freelance Command Center. "
+            "You are an autonomous Etsy product content generator for Creator Kit. "
             "Generate complete, ready-to-use Etsy listing content in structured format. "
             "Output MUST follow the exact format below so it can be parsed automatically."
         ),
@@ -152,7 +153,7 @@ LABELS = {
 }
 
 
-def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
+def run_week(key: str, tasks: list[dict[str, Any]], guide: str, state: dict[str, Any]) -> list[dict[str, Any]]:
     label = LABELS[key]
     console.print(Panel(f"[bold]{label}[/bold]", style="cyan"))
 

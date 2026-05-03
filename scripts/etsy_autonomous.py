@@ -50,7 +50,7 @@ import os
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import anthropic
 from dotenv import load_dotenv
@@ -193,32 +193,34 @@ def main() -> None:
 
     guide = load_brand_guide(BRAND_FILES)
 
-    state = load_state(STATE_FILE)
+    state: dict[str, Any] = cast(dict[str, Any], load_state(STATE_FILE)) or {}
     if state:
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
             initialize_master_prompt_file()
     else:
-        checklist = extract_checklist(guide)
+        checklist: dict[str, list[dict[str, Any]]] = extract_checklist(guide)
         state = {"started_at": datetime.now().isoformat(), "checklist": checklist}
         save_state(STATE_FILE, state)
         initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")
 
+    week_checklist: dict[str, list[dict[str, Any]]] = state.get("checklist", {})
     for key in ["week_1", "week_2", "week_3", "week_4"]:
-        tasks = state["checklist"].get(key, [])
+        tasks: list[dict[str, Any]] = week_checklist.get(key, [])
         if not tasks:
             console.print(f"[dim]No tasks for {key}[/dim]")
             continue
         if all(t["status"] == "completed" for t in tasks):
             console.print(f"[dim]{LABELS[key]} already complete[/dim]")
             continue
-        state["checklist"][key] = run_week(key, tasks, guide, state)
+        week_checklist[key] = run_week(key, tasks, guide, state)
+        state["checklist"] = week_checklist
         console.print(f"\n[green]✓ {LABELS[key]} complete[/green]\n")
         time.sleep(3)
 
-    done  = sum(1 for v in state["checklist"].values() for t in v if t["status"] == "completed")
-    total = sum(len(v) for v in state["checklist"].values())
+    done  = sum(1 for v in week_checklist.values() for t in v if t["status"] == "completed")
+    total = sum(len(v) for v in week_checklist.values())
     log_run("autonomous_executor", "etsy_autonomous", "success", f"Tasks completed: {done}/{total}")
     console.print(Panel(
         f"[bold green]Launch complete[/bold green]\n\n"

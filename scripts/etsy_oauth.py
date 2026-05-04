@@ -182,7 +182,7 @@ def main() -> None:
     webbrowser.open(url)
 
     try:
-        code = _wait_for_code()
+        code = _wait_for_code(state)
     except RuntimeError as e:
         print(f"[error] {e}")
         sys.exit(1)

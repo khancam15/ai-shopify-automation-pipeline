@@ -15,7 +15,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from db import log_run, update_queue_status
+from db import log_run
 import json
 
 _ROOT         = Path(__file__).resolve().parent.parent

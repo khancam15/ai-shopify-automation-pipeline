@@ -42,14 +42,14 @@ def _global_tags(master_text: str) -> list[str]:
     return tags[:13]
 
 
-def _list_products(master_text: str) -> list[dict]:
+def list_products(master_text: str) -> list[dict[str, str]]:
     return [
         {"name": m.group(1).strip(), "price": m.group(2)}
         for m in PRODUCT_RE.finditer(master_text)
     ]
 
 
-def _find_product_section(master_text: str, product_name: str) -> str:
+def find_product_section(master_text: str, product_name: str) -> str:
     """Return the section of master.txt closest to the product name."""
     idx = master_text.lower().find(product_name.lower())
     if idx == -1:
@@ -64,7 +64,7 @@ def generate(product_name: str, price: float) -> Path:
         )
 
     master_text = MASTER_FILE.read_text(encoding="utf-8")
-    section     = _find_product_section(master_text, product_name)
+    section     = find_product_section(master_text, product_name)
     global_tags = _global_tags(master_text)
 
     # Try to extract a specific title from the section
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         if not MASTER_FILE.exists():
             print("[error] outputs/master.txt not found — run ./run.sh phase2 first")
             sys.exit(1)
-        products = _list_products(MASTER_FILE.read_text(encoding="utf-8"))
+        products = list_products(MASTER_FILE.read_text(encoding="utf-8"))
         if not products:
             print("No products found in master.txt")
         else:

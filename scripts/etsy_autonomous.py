@@ -50,6 +50,7 @@ import os
 import time
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 
 import anthropic
 from dotenv import load_dotenv
@@ -70,9 +71,12 @@ _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_ENV_FILE)
 
 console = Console()
-client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+if not _ANTHROPIC_API_KEY:
+    raise SystemExit("[error] ANTHROPIC_API_KEY is not set. Add it to your .env file.")
+client  = anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY)
 
-MODEL               = "claude-haiku-4-5-20251001"
+MODEL               = "claude-haiku-4-5"
 _ROOT               = Path(__file__).resolve().parent.parent
 BRAND_FILES         = (_ROOT / "outputs" / "brand_guide.md", _ROOT / "brand_guide.md")
 STATE_FILE          = _ROOT / "outputs" / "executor_state.json"
@@ -110,7 +114,7 @@ def generate_listing_content(task: str, guide: str, week: str) -> str:
         model=MODEL,
         max_tokens=2000,
         system=(
-            "You are an autonomous Etsy product content generator for The Freelance Command Center. "
+            "You are an autonomous Etsy product content generator for Creator Kit."
             "Generate complete, ready-to-use Etsy listing content in structured format. "
             "Output MUST follow the exact format below so it can be parsed automatically."
         ),
@@ -152,7 +156,7 @@ LABELS = {
 }
 
 
-def run_week(key: str, tasks: list, guide: str, state: dict) -> list:
+def run_week(key: str, tasks: list[dict[str, Any]], guide: str, state: dict[str, Any]) -> list[dict[str, Any]]:
     label = LABELS[key]
     console.print(Panel(f"[bold]{label}[/bold]", style="cyan"))
 
@@ -192,8 +196,10 @@ def main() -> None:
 
     guide = load_brand_guide(BRAND_FILES)
 
-    state = load_state(STATE_FILE)
-    if state:
+    loaded = load_state(STATE_FILE)
+    state: dict[str, Any]
+    if loaded is not None:
+        state = loaded
         console.print("[yellow]Resuming from saved state.[/yellow]")
         if not MASTER_PROMPT_FILE.exists():
             initialize_master_prompt_file()
@@ -204,20 +210,21 @@ def main() -> None:
         initialize_master_prompt_file()
         console.print("[green]New execution started.[/green]")
 
+    checklist_data: dict[str, list[dict[str, Any]]] = state["checklist"]
     for key in ["week_1", "week_2", "week_3", "week_4"]:
-        tasks = state["checklist"].get(key, [])
+        tasks: list[dict[str, Any]] = checklist_data.get(key, [])
         if not tasks:
             console.print(f"[dim]No tasks for {key}[/dim]")
             continue
         if all(t["status"] == "completed" for t in tasks):
             console.print(f"[dim]{LABELS[key]} already complete[/dim]")
             continue
-        state["checklist"][key] = run_week(key, tasks, guide, state)
+        checklist_data[key] = run_week(key, tasks, guide, state)
         console.print(f"\n[green]✓ {LABELS[key]} complete[/green]\n")
         time.sleep(3)
 
-    done  = sum(1 for v in state["checklist"].values() for t in v if t["status"] == "completed")
-    total = sum(len(v) for v in state["checklist"].values())
+    done  = sum(1 for v in checklist_data.values() for t in v if t["status"] == "completed")
+    total = sum(len(v) for v in checklist_data.values())
     log_run("autonomous_executor", "etsy_autonomous", "success", f"Tasks completed: {done}/{total}")
     console.print(Panel(
         f"[bold green]Launch complete[/bold green]\n\n"

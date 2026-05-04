@@ -39,7 +39,9 @@ import os
 import re
 import sys
 import time
+from datetime import timezone
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -56,8 +58,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from db import log_run
 from canva_api import CanvaClient, CanvaAPIError
 from meta_generator import (
-    _find_product_section,
-    _list_products,
+    find_product_section,
+    list_products,
     MASTER_FILE,
     INBOX_DIR,
 )
@@ -165,7 +167,7 @@ def _load_brand_context() -> str:
             "Serif headlines, clean sans body, minimal editorial layout."
         )
     text   = BRAND_GUIDE.read_text(encoding="utf-8")
-    lines  = []
+    lines: list[str] = []
     in_sec = False
     for line in text.split("\n"):
         lo = line.lower()
@@ -178,14 +180,14 @@ def _load_brand_context() -> str:
     return "\n".join(lines[:30]) or text[:600]
 
 
-def _get_product_info(product_name: str, price: float) -> dict:
+def _get_product_info(product_name: str, price: float) -> dict[str, Any]:
     """Read description from master.txt; fall back to meta.json."""
     description = ""
     title       = product_name
 
     if MASTER_FILE.exists():
         text    = MASTER_FILE.read_text(encoding="utf-8")
-        section = _find_product_section(text, product_name)
+        section = find_product_section(text, product_name)
         # Extract description
         dm = re.search(
             r"\*\*(?:Full )?Description\*\*[:\s]*([\s\S]{50,1500}?)(?=\n\*\*|\Z)",
@@ -265,13 +267,13 @@ Create the complete {len(pages)}-page template now. Design all pages before outp
 
 # ── API call ──────────────────────────────────────────────────────────────────
 
-def _call_api(prompt: str) -> dict:
+def _call_api(prompt: str) -> dict[str, Any]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set in .env")
 
     canva_token = os.getenv("CANVA_MCP_TOKEN", "")
-    mcp_server: dict = {"type": "url", "url": CANVA_MCP_URL, "name": "canva"}
+    mcp_server: dict[str, Any] = {"type": "url", "url": CANVA_MCP_URL, "name": "canva"}
     if canva_token:
         mcp_server["authorization_token"] = canva_token
 
@@ -293,21 +295,24 @@ def _call_api(prompt: str) -> dict:
     )
 
     if resp.status_code == 401:
-        body    = resp.json()
+        try:
+            body: dict[str, Any] = resp.json()
+        except ValueError:
+            body = {}
         auth_url = (body.get("error") or {}).get("auth_url") or body.get("auth_url")
         if auth_url:
             raise RuntimeError(
                 f"\n  Canva requires authorisation. Visit:\n\n  {auth_url}\n\n"
                 f"  Then add CANVA_MCP_TOKEN=Bearer <token> to .env and re-run.\n"
             )
-        raise RuntimeError(f"API 401: {body}")
+        raise RuntimeError(f"API 401: {body or resp.text[:200]}")
 
     resp.raise_for_status()
     return resp.json()
 
 
-def _collect_text(response: dict) -> str:
-    parts = []
+def _collect_text(response: dict[str, Any]) -> str:
+    parts: list[str] = []
     for block in response.get("content", []):
         btype = block.get("type", "")
         if btype == "text":
@@ -437,7 +442,7 @@ def _update_meta(product_name: str, template_link: str, pdf_path: str) -> None:
                 new_desc = ((row["description"] or "") + link_blurb)[:4000]
                 conn.execute(
                     "UPDATE queue SET description = ?, updated_at = ? WHERE id = ?",
-                    (new_desc, datetime.utcnow().isoformat(), row["id"]),
+                    (new_desc, datetime.now(timezone.utc).isoformat(), row["id"]),
                 )
                 print(f"  [3B] Queue row description updated with template link")
     except Exception as exc:
@@ -465,7 +470,7 @@ def create_product(product_name: str, price: float | None = None) -> int:
         price = 9.99
         if MASTER_FILE.exists():
             text     = MASTER_FILE.read_text(encoding="utf-8")
-            products = _list_products(text)
+            products = list_products(text)
             for p in products:
                 if p["name"].lower() == product_name.lower():
                     price = float(p["price"])
@@ -537,7 +542,7 @@ def create_product(product_name: str, price: float | None = None) -> int:
     rec_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"  [3B] Record saved → {rec_path}")
 
-    status_parts = []
+    status_parts: list[str] = []
     if template_link:
         status_parts.append("template link ✓")
     if pdf_path:

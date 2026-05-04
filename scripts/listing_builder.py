@@ -40,7 +40,8 @@ def _load_product_extras(product_name: str) -> dict:
             "template_link": meta.get("template_link", ""),
             "product_pdf":   meta.get("product_pdf", ""),
         }
-    except Exception:
+    except json.JSONDecodeError as exc:
+        print(f"  [4.2] Warning: meta.json is malformed ({meta_file}): {exc}")
         return {"template_link": "", "product_pdf": ""}
 
 

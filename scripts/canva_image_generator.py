@@ -62,7 +62,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from db import insert_queue_item, title_exists, log_run
 from meta_generator import (
     generate as write_meta,
-    _list_products,
+    list_products as _list_products,
     MASTER_FILE,
 )
 from canva_api import CanvaClient, CanvaAPIError
@@ -268,7 +268,10 @@ def _call_api(prompt: str) -> dict:
     )
 
     if resp.status_code == 401:
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
         auth_url = (body.get("error") or {}).get("auth_url") or body.get("auth_url")
         if auth_url:
             raise RuntimeError(
@@ -278,7 +281,7 @@ def _call_api(prompt: str) -> dict:
                 f"  CANVA_MCP_TOKEN=Bearer <your_token>\n"
                 f"  Then re-run.\n"
             )
-        raise RuntimeError(f"API 401: {body}")
+        raise RuntimeError(f"API 401: {body or resp.text[:200]}")
 
     resp.raise_for_status()
     return resp.json()

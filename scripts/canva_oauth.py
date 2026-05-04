@@ -24,17 +24,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 import secrets
 import sys
-import threading
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 import requests
-from dotenv import dotenv_values, load_dotenv
+from dotenv import dotenv_values
 
 _ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = _ROOT / ".env"
@@ -58,10 +57,11 @@ def _pkce_pair() -> tuple[str, str]:
 
 _auth_code: str | None = None
 _server_error: str | None = None
+_expected_state: str | None = None
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, *_):  # silence default access log
+    def log_message(self, format: str, *args: Any) -> None:  # silence default access log
         pass
 
     def do_GET(self):
@@ -72,7 +72,16 @@ class _Handler(BaseHTTPRequestHandler):
         if "error" in params:
             _server_error = params["error"][0]
             self._respond("Authorization denied — you can close this tab.")
-        elif "code" in params:
+            return
+
+        # Validate state to prevent CSRF
+        returned_state = params.get("state", [None])[0]
+        if returned_state != _expected_state:
+            _server_error = "state_mismatch"
+            self._respond("Authorization failed — state mismatch. You can close this tab.")
+            return
+
+        if "code" in params:
             _auth_code = params["code"][0]
             self._respond("Authorization successful! You can close this tab.")
         else:
@@ -86,7 +95,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(html.encode())
 
 
-def _wait_for_code() -> str:
+def _wait_for_code(expected_state: str) -> str:
+    global _expected_state
+    _expected_state = expected_state
     server = HTTPServer(("localhost", 8888), _Handler)
     server.timeout = 120
     while _auth_code is None and _server_error is None:
@@ -99,7 +110,7 @@ def _wait_for_code() -> str:
 
 # ── Token exchange ─────────────────────────────────────────────────────────────
 
-def _exchange_code(client_id: str, client_secret: str, code: str, verifier: str) -> dict:
+def _exchange_code(client_id: str, client_secret: str, code: str, verifier: str) -> dict[str, Any]:
     resp = requests.post(
         TOKEN_URL,
         data={
@@ -126,7 +137,7 @@ def _update_env(updates: dict[str, str]) -> None:
 
     existing.update(updates)
 
-    lines = []
+    lines: list[str] = []
     for k, v in existing.items():
         lines.append(f"{k}={v}\n")
 
@@ -174,7 +185,7 @@ def main() -> None:
     webbrowser.open(url)
 
     try:
-        code = _wait_for_code()
+        code = _wait_for_code(state)
     except RuntimeError as e:
         print(f"[error] {e}")
         sys.exit(1)

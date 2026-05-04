@@ -62,7 +62,15 @@ def validate(product_name: str) -> ValidationResult:
         result.fail(f"listing.json not found at {payload_file}")
         return result
 
-    payload = json.loads(payload_file.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(payload_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        result.fail(f"listing.json is malformed: {exc}")
+        return result
+
+    if not isinstance(payload, dict):
+        result.fail("listing.json must be a JSON object")
+        return result
 
     # Title
     title = payload.get("title", "")
@@ -72,7 +80,12 @@ def validate(product_name: str) -> ValidationResult:
         result.fail("Title is empty")
 
     # Tags
-    tags: list[str] = payload.get("tags", [])
+    tags_raw = payload.get("tags", [])
+    if not isinstance(tags_raw, list):
+        result.fail(f"tags must be a list, got {type(tags_raw).__name__}")
+        tags: list[str] = []
+    else:
+        tags = [str(t) for t in tags_raw]
     if len(tags) != TAG_COUNT_EXACT:
         result.fail(f"Tag count: {len(tags)} (must be exactly {TAG_COUNT_EXACT})")
     long_tags = [t for t in tags if len(t) > TAG_MAX_CHARS]
@@ -85,9 +98,13 @@ def validate(product_name: str) -> ValidationResult:
         result.fail(f"Description too short: {len(desc)} chars (min {DESC_MIN_CHARS})")
 
     # Price
-    price = payload.get("price", 0)
-    if not (PRICE_MIN <= price <= PRICE_MAX):
-        result.fail(f"Price ${price} outside Etsy range (${PRICE_MIN}–${PRICE_MAX})")
+    try:
+        price = float(payload.get("price", 0))
+    except (TypeError, ValueError):
+        result.fail(f"price is not a valid number: {payload.get('price')!r}")
+        price = 0.0
+    if price and not (PRICE_MIN <= price <= PRICE_MAX):
+        result.fail(f"Price ${price} outside Etsy range (${PRICE_MIN}\u2013${PRICE_MAX})")
 
     # Images — look in both Mockups/ and the product ReadyToUpload dir
     mockups_dir = _ROOT / "02_Products" / product_name / "Mockups"

@@ -1,17 +1,17 @@
 [Unit]
-Description=AI Shopify Product Pipeline - autonomous loop
+Description=AI Shopify Automation Pipeline - autonomous loop
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/ai-etsy-product-pipeline
-ExecStart=/root/ai-etsy-product-pipeline/loop.sh
+WorkingDirectory=/root/ai-shopify-automation-pipeline
+ExecStart=/root/ai-shopify-automation-pipeline/loop.sh
 Restart=always
 RestartSec=30
-StandardOutput=append:/root/ai-etsy-product-pipeline/logs/loop.log
-StandardError=append:/root/ai-etsy-product-pipeline/logs/loop_errors.log
+StandardOutput=append:/root/ai-shopify-automation-pipeline/logs/loop.log
+StandardError=append:/root/ai-shopify-automation-pipeline/logs/loop_errors.log
 
 [Install]
 WantedBy=multi-user.target

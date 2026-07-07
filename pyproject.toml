@@ -1,5 +1,5 @@
 [project]
-name = "ai-shopify-product-pipeline"
+name = "ai-shopify-automation-pipeline"
 version = "0.1.0"
 description = "AI-powered Shopify digital product launch pipeline"
 requires-python = ">=3.11"

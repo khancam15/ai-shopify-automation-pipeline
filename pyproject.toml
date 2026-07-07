@@ -1,7 +1,7 @@
 [project]
-name = "ai-etsy-product-pipeline"
+name = "ai-shopify-product-pipeline"
 version = "0.1.0"
-description = "AI-powered Etsy digital product launch pipeline"
+description = "AI-powered Shopify digital product launch pipeline"
 requires-python = ">=3.11"
 dependencies = [
   "anthropic",

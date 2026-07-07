@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# run.sh — VPS entry point for the Etsy pipeline
+# run.sh — VPS entry point for the Canva → Shopify pipeline
 #
 # Usage:
 #   ./run.sh db-init                    — initialise SQLite database (run once on new VPS)
-#   ./run.sh sales [--full]             — sync Etsy sales & revenue to SQLite
+#   ./run.sh sales [--full]             — sync Shopify orders & revenue to SQLite
 #   ./run.sh phase1                     — Brand Builder crew (writes outputs/brand_guide.md)
 #   ./run.sh phase2                     — Launch Executor (writes outputs/master.txt)
 #   ./run.sh phase2-rich                — Autonomous Executor (richer prompt engine)
@@ -11,8 +11,8 @@
 #   ./run.sh phase3b <product> [--price]— Canva product creator (actual template buyers download)
 #   ./run.sh phase4 <product>           — Process images → build listing → validate → stage
 #   ./run.sh canva-auth                 — One-time Canva API OAuth setup (saves tokens to .env)
-#   ./run.sh etsy-auth                  — One-time Etsy API OAuth setup (saves tokens to .env)
-#   ./run.sh phase5 <product>           — Upload staged listing to Etsy via API
+#   ./run.sh shopify-auth               — One-time Shopify Admin API setup (saves tokens to .env)
+#   ./run.sh phase5 <product>           — Upload staged listing to Shopify via Admin API
 #   ./run.sh phase6 <product>           — SEO gap analysis + auto-apply best tags to live listing
 #   ./run.sh phase7                     — Daily health dashboard
 #   ./run.sh all                        — Full pipeline: phase1 → phase2
@@ -67,20 +67,20 @@ case "$PHASE" in
         "$PYTHON" scripts/email_digest.py
         ;;
     sales)
-        echo "[run.sh] Syncing sales & revenue from Etsy"
+        echo "[run.sh] Syncing sales & revenue from Shopify"
         "$PYTHON" scripts/sales_tracker.py ${2:+$2}
         ;;
     phase1)
         echo "[run.sh] Starting Phase 1 — Brand Builder"
-        "$PYTHON" scripts/etsy_brand_crew.py
+        "$PYTHON" scripts/shopify_brand_crew.py
         ;;
     phase2)
         echo "[run.sh] Starting Phase 2 — Launch Executor"
-        "$PYTHON" scripts/etsy_launch_executor.py
+        "$PYTHON" scripts/shopify_autonomous.py
         ;;
     phase2-rich)
         echo "[run.sh] Starting Phase 2 (rich) — Autonomous Executor"
-        "$PYTHON" scripts/etsy_autonomous.py
+        "$PYTHON" scripts/shopify_autonomous.py
         ;;
     phase3|design)
         _require_product
@@ -104,18 +104,18 @@ case "$PHASE" in
         echo "[run.sh] Starting Canva API OAuth setup (💻 HOST only)"
         "$PYTHON" scripts/canva_oauth.py
         ;;
-    etsy-auth)
-        echo "[run.sh] Starting Etsy API OAuth setup (💻 HOST only)"
-        "$PYTHON" scripts/etsy_oauth.py
+    shopify-auth)
+        echo "[run.sh] Starting Shopify Admin API setup (💻 HOST only)"
+        "$PYTHON" scripts/shopify_setup.py
         ;;
     phase5)
         _require_product
-        echo "[run.sh] Phase 5 — Upload to Etsy via API: $PRODUCT"
-        "$PYTHON" scripts/etsy_api_uploader.py "$PRODUCT"
+        echo "[run.sh] Phase 5 — Upload to Shopify via Admin API: $PRODUCT"
+        "$PYTHON" scripts/shopify_uploader.py "$PRODUCT"
         ;;
     phase6)
         _require_product
-        echo "[run.sh] Phase 6 — SEO analysis: $PRODUCT"
+        echo "[run.sh] Phase 6 — SEO analysis + Shopify tag update: $PRODUCT"
         "$PYTHON" scripts/seo_analyzer.py "$PRODUCT"
         ;;
     phase7)
@@ -124,8 +124,8 @@ case "$PHASE" in
         ;;
     all)
         echo "[run.sh] Running full pipeline: Phase 1 → Phase 2"
-        "$PYTHON" scripts/etsy_brand_crew.py
-        "$PYTHON" scripts/etsy_launch_executor.py
+        "$PYTHON" scripts/shopify_brand_crew.py
+        "$PYTHON" scripts/shopify_autonomous.py
         ;;
     full)
         _require_product
@@ -136,11 +136,11 @@ case "$PHASE" in
         "$PYTHON" scripts/listing_builder.py "$PRODUCT"
         "$PYTHON" scripts/pre_upload_validator.py "$PRODUCT"
         "$PYTHON" scripts/file_organizer.py "$PRODUCT"
-        "$PYTHON" scripts/etsy_api_uploader.py "$PRODUCT"
+        "$PYTHON" scripts/shopify_uploader.py "$PRODUCT"
         "$PYTHON" scripts/seo_analyzer.py "$PRODUCT" || true
         ;;
     *)
-        echo "Usage: $0 {db-init|digest|canva-auth|etsy-auth|phase1|phase2|phase2-rich|phase3|phase4|phase5|phase6|phase7|all|full|design} [product_name]"
+        echo "Usage: $0 {db-init|digest|canva-auth|shopify-auth|phase1|phase2|phase2-rich|phase3|phase4|phase5|phase6|phase7|all|full|design} [product_name]"
         exit 1
         ;;
 esac

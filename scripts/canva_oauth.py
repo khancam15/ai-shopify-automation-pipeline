@@ -133,7 +133,7 @@ def _exchange_code(client_id: str, client_secret: str, code: str, verifier: str)
 def _update_env(updates: dict[str, str]) -> None:
     existing = {}
     if ENV_PATH.exists():
-        existing = dict(dotenv_values(ENV_PATH))
+        existing = {k: v for k, v in dotenv_values(ENV_PATH).items() if v is not None}
 
     existing.update(updates)
 

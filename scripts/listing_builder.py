@@ -2,7 +2,7 @@
 listing_builder.py  —  Phase 4.2
 ──────────────────────────────────
 Reads a queue row from SQLite and formats all fields into a structured
-JSON payload that Playwright and the validator consume downstream.
+JSON payload that shopify_uploader.py and the validator consume downstream.
 
 Run:
     python scripts/listing_builder.py <product_name>   — uses newest pending row
@@ -18,7 +18,7 @@ import json
 import sys
 from pathlib import Path
 
-from db import get_conn, DB_PATH, log_run
+from db import get_conn, log_run
 
 _ROOT       = Path(__file__).resolve().parent.parent
 ASSETS_DIR  = _ROOT / "04_Assets" / "ReadyToUpload"
@@ -85,7 +85,7 @@ def build_listing_payload(queue_id: int) -> dict:
         "price":         row["price"],
         "category":      row["category"],
         "template_link": extras["template_link"],
-        "digital_file":  extras["product_pdf"],   # path to PDF for Etsy file upload
+        "digital_file":  extras["product_pdf"],   # Canva PDF path (attached to order confirmation)
     }
 
     out_dir = ASSETS_DIR / product_name

@@ -25,7 +25,7 @@ import os
 import re
 import smtplib
 import sys
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -44,6 +44,11 @@ EMAIL_FROM      = os.getenv("EMAIL_FROM", "")
 EMAIL_SMTP_PASS = os.getenv("EMAIL_SMTP_PASS", "")
 SMTP_HOST       = "smtp.gmail.com"
 SMTP_PORT       = 587
+
+
+def _utc_now() -> datetime:
+    """Return UTC time in the same naive ISO format used by existing rows."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
@@ -83,13 +88,12 @@ def _parse_brand_summary(brand_text: str) -> dict:
 
 def _get_stats() -> dict:
     """Pull this week's published/failed counts and queue status."""
-    from datetime import timedelta
-    week_start = (datetime.utcnow() - timedelta(days=7)).isoformat()
+    week_start = (_utc_now() - timedelta(days=7)).isoformat()
     stats = {}
 
     with get_conn() as conn:
         stats["published_week"] = conn.execute(
-            "SELECT COUNT(*) FROM run_log WHERE status='success' AND phase='etsy_api_uploader' AND run_at >= ?",
+            "SELECT COUNT(*) FROM run_log WHERE status='success' AND phase='shopify_uploader' AND run_at >= ?",
             (week_start,)
         ).fetchone()[0]
 
@@ -113,8 +117,8 @@ def _get_stats() -> dict:
 
 def _build_email(brand: dict, products: list[dict], stats: dict, sales: dict, weekly_limit: int = 5) -> tuple[str, str]:
     """Return (subject, html_body)."""
-    date_str = datetime.utcnow().strftime("%B %d, %Y")
-    subject  = f"Etsy Pipeline — Design Brief for {date_str}"
+    date_str = _utc_now().strftime("%B %d, %Y")
+    subject  = f"Shopify Pipeline — Design Brief for {date_str}"
 
     store    = brand.get("store_name", "Your Store")
     tagline  = brand.get("tagline", "")
@@ -128,7 +132,7 @@ def _build_email(brand: dict, products: list[dict], stats: dict, sales: dict, we
                   <td style="padding:8px 12px;border-bottom:1px solid #eee;">{p['name']}</td>
                   <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">${p['price']}</td>
                   <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#888;font-size:12px;">
-                    Design 5 mockups in Canva → upload to VPS → queue_writer.py
+                    Automated: Phase 3 generates mockups via Canva MCP
                   </td>
                 </tr>"""
             for p in products
@@ -203,7 +207,7 @@ def _build_email(brand: dict, products: list[dict], stats: dict, sales: dict, we
     <li>Phase 3 designs 6 mockup images per product (Canva MCP)</li>
     <li>Phase 3B creates the actual template buyers download (Canva MCP)</li>
     <li>Phase 4 processes images and builds the listing</li>
-    <li>Phase 5 publishes to Etsy automatically (up to {weekly_limit}/week)</li>
+    <li>Phase 5 publishes to Shopify automatically (up to {weekly_limit}/week)</li>
     <li>Phase 6 runs SEO gap analysis after each publish</li>
   </ul>
   <p style="font-size:13px;color:#888;">
@@ -213,7 +217,7 @@ def _build_email(brand: dict, products: list[dict], stats: dict, sales: dict, we
 
   <hr style="border:none;border-top:1px solid #eee;margin:32px 0;">
   <p style="color:#aaa;font-size:11px;text-align:center;">
-    AI Etsy Pipeline · {date_str} · Auto-generated
+    AI Shopify Pipeline · {date_str} · Auto-generated
   </p>
 
 </body>

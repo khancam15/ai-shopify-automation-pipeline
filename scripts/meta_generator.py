@@ -39,7 +39,7 @@ def _global_tags(master_text: str) -> list[str]:
         return []
     raw = m.group(1).replace("\n", ",")
     tags = [t.strip().strip(",") for t in raw.split(",") if t.strip()]
-    return tags[:13]
+    return tags[:250]
 
 
 def list_products(master_text: str) -> list[dict[str, str]]:
@@ -71,19 +71,19 @@ def generate(product_name: str, price: float) -> Path:
     title = ""
     tm = TITLE_RE.search(section)
     if tm:
-        title = tm.group(1).strip()[:140]
+        title = tm.group(1).strip()[:255]
     if not title:
         # Build a sensible default title from the product name
-        title = f"{product_name} | Editable Canva Template | Digital Download for Creators"[:140]
+        title = f"{product_name} | Editable Canva Template | Digital Download for Creators"[:255]
 
     # Try to extract tags from the section; fall back to global tags
     tags: list[str] = []
     tgm = TAGS_RE.search(section)
     if tgm:
         raw = tgm.group(1).replace("\n", ",")
-        tags = [t.strip().strip(",*").lower() for t in raw.split(",") if t.strip()][:13]
+        tags = [t.strip().strip(",*").lower() for t in raw.split(",") if t.strip()][:250]
     if len(tags) < 13:
-        tags = (tags + global_tags)[:13]
+        tags = (tags + global_tags)[:250]
 
     # Description
     description = ""

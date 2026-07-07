@@ -1,10 +1,10 @@
 # Threat Model
 
 ## Scope
-This document covers the security model for the autonomous Etsy executor in scripts/etsy_autonomous.py.
+This document covers the security model for the autonomous Shopify executor in scripts/shopify_autonomous.py.
 
 ## Assets
-- Etsy seller account access and storefront state.
+- Shopify seller account access and storefront state.
 - Anthropic API credentials from .env.
 - Generated execution outputs in outputs/.
 
@@ -21,7 +21,7 @@ This document covers the security model for the autonomous Etsy executor in scri
 
 ## Implemented Controls
 - Fail-closed click blocking when trusted domain cannot be verified.
-- Manual approval gates for Etsy clicks and destructive actions.
+- Manual approval gates for Shopify clicks and destructive actions.
 - Strict read-only bash command allowlist with per-command argument validation.
 - Restricted editor file access to outputs/.
 - Secret scan in CI via gitleaks and dependency audit in CI via pip-audit.

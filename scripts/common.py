@@ -1,5 +1,5 @@
 """
-Shared helpers for Etsy pipeline scripts.
+Shared helpers for Shopify pipeline scripts.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def load_brand_guide(brand_guides: tuple[Path, ...]) -> str:
     fallback_file = brand_guides[1] if len(brand_guides) > 1 else brand_guides[0]
     raise FileNotFoundError(
         f"Brand guide not found at {preferred_file.resolve()} or {fallback_file.resolve()}\n"
-        "Run etsy_brand_crew.py first to generate it."
+        "Run shopify_brand_crew.py first to generate it."
     )
 
 

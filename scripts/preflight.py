@@ -6,8 +6,7 @@ the loop does any real work. Runs once at loop.sh startup.
 
 Checks (in order):
   1. Required .env keys are present and non-empty
-  2. Etsy access token is valid (GET /v3/application/openapi-ping)
-     → auto-refreshes if expired, saves new tokens to .env
+  2. Shopify Admin API token is valid (GET /admin/api/.../shop.json)
   3. Canva access token is valid (GET /v1/users/me)
      → auto-refreshes if expired, saves new tokens to .env
   4. ANTHROPIC_API_KEY is present (not validated with a live call — saves cost)
@@ -22,7 +21,6 @@ fix before the pipeline burns an hour on Phases 1–3B then crashes at Phase 5.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -32,25 +30,22 @@ _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
 ENV_PATH = _ROOT / ".env"
 
-try:
-    import requests
-except ImportError:
-    print("[preflight] ERROR: requests not installed. Run: .venv/bin/pip install requests")
-    sys.exit(1)
-
 sys.path.insert(0, str(Path(__file__).parent))
 from api_retry import rget, rpost
 
-ETSY_PING_URL  = "https://openapi.etsy.com/v3/application/openapi-ping"
-ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
 CANVA_ME_URL   = "https://api.canva.com/rest/v1/users/me"
 CANVA_TOKEN_URL = "https://api.canva.com/rest/v1/oauth/token"
+SHOPIFY_API_VERSION = "2024-01"
 
 
 # ── .env helpers ──────────────────────────────────────────────────────────────
 
 def _load() -> dict[str, str]:
-    return dict(dotenv_values(ENV_PATH))
+    return {k: v for k, v in dotenv_values(ENV_PATH).items() if v is not None}
+
+
+def _normalize_domain(domain: str) -> str:
+    return domain.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
 
 
 def _save(updates: dict[str, str]) -> None:
@@ -65,60 +60,38 @@ def _check_required_keys(env: dict) -> list[str]:
     """Return list of missing required keys."""
     required = [
         "ANTHROPIC_API_KEY",
-        "ETSY_API_KEY",
-        "ETSY_ACCESS_TOKEN",
-        "ETSY_REFRESH_TOKEN",
-        "ETSY_SHOP_ID",
+        "SHOPIFY_STORE_DOMAIN",
+        "SHOPIFY_ACCESS_TOKEN",
         "CANVA_ACCESS_TOKEN",
         "CANVA_REFRESH_TOKEN",
     ]
     return [k for k in required if not env.get(k, "").strip()]
 
 
-def _check_etsy(env: dict) -> tuple[bool, str]:
+def _check_shopify(env: dict) -> tuple[bool, str]:
     """
-    Ping the Etsy API with the current access token.
-    Attempts one token refresh on 401 before giving up.
+    Ping the Shopify Admin API with the configured access token.
     Returns (ok, message).
     """
-    hdrs = {
-        "x-api-key":     env["ETSY_API_KEY"],
-        "Authorization": f"Bearer {env['ETSY_ACCESS_TOKEN']}",
-    }
-
-    resp = rget(ETSY_PING_URL, headers=hdrs, timeout=15, _label="Etsy preflight")
+    domain = _normalize_domain(env["SHOPIFY_STORE_DOMAIN"])
+    url = f"https://{domain}/admin/api/{SHOPIFY_API_VERSION}/shop.json"
+    resp = rget(
+        url,
+        headers={"X-Shopify-Access-Token": env["SHOPIFY_ACCESS_TOKEN"]},
+        timeout=15,
+        _label="Shopify preflight",
+    )
 
     if resp.status_code == 200:
-        return True, "Etsy token valid ✓"
-
+        shop = resp.json().get("shop", {})
+        name = shop.get("name") or domain
+        return True, f"Shopify token valid ({name}) ✓"
     if resp.status_code == 401:
-        # Try to refresh
-        print("  [preflight] Etsy token expired — refreshing...")
-        try:
-            r = rpost(
-                ETSY_TOKEN_URL,
-                data={
-                    "grant_type":    "refresh_token",
-                    "client_id":     env["ETSY_API_KEY"],
-                    "refresh_token": env["ETSY_REFRESH_TOKEN"],
-                },
-                timeout=30,
-                _label="Etsy token refresh",
-            )
-            if r.ok:
-                data = r.json()
-                env["ETSY_ACCESS_TOKEN"]  = data["access_token"]
-                env["ETSY_REFRESH_TOKEN"] = data.get("refresh_token", env["ETSY_REFRESH_TOKEN"])
-                _save({
-                    "ETSY_ACCESS_TOKEN":  env["ETSY_ACCESS_TOKEN"],
-                    "ETSY_REFRESH_TOKEN": env["ETSY_REFRESH_TOKEN"],
-                })
-                return True, "Etsy token refreshed and saved ✓"
-            return False, f"Etsy token refresh failed ({r.status_code}): {r.text[:120]}"
-        except Exception as exc:
-            return False, f"Etsy token refresh error: {exc}"
+        return False, "Shopify access token invalid — re-run: python scripts/shopify_setup.py"
+    if resp.status_code == 404:
+        return False, f"Shopify store not found: {domain}"
 
-    return False, f"Etsy API unexpected response ({resp.status_code}): {resp.text[:120]}"
+    return False, f"Shopify API unexpected response ({resp.status_code}): {resp.text[:120]}"
 
 
 def _check_canva(env: dict) -> tuple[bool, str]:
@@ -188,7 +161,6 @@ def run_preflight() -> bool:
     """
     print("[preflight] Running credential checks...")
     env     = _load()
-    ok      = True
     fatal   = False
 
     # ── 1. Required keys present ─────────────────────────────────────────────
@@ -207,11 +179,10 @@ def run_preflight() -> bool:
     else:
         print("  [preflight] WARNING: ANTHROPIC_API_KEY doesn't look right (expected sk-ant-...)")
 
-    # ── 3. Etsy token ────────────────────────────────────────────────────────
-    etsy_ok, etsy_msg = _check_etsy(env)
-    prefix = "  [preflight]" + (" ✓" if etsy_ok else " ✗")
-    print(f"  [preflight] Etsy:  {etsy_msg}")
-    if not etsy_ok:
+    # ── 3. Shopify token ─────────────────────────────────────────────────────
+    shopify_ok, shopify_msg = _check_shopify(env)
+    print(f"  [preflight] Shopify: {shopify_msg}")
+    if not shopify_ok:
         fatal = True
 
     # ── 4. Canva token ───────────────────────────────────────────────────────
@@ -224,7 +195,7 @@ def run_preflight() -> bool:
 
     # ── Result ───────────────────────────────────────────────────────────────
     if fatal:
-        print("[preflight] FATAL: Etsy credentials invalid. Fix them before restarting.")
+        print("[preflight] FATAL: Shopify credentials invalid. Fix them before restarting.")
         return False
 
     print("[preflight] Pre-flight passed — starting pipeline.")

@@ -2,7 +2,7 @@
 db.py — SQLite schema and helpers
 ───────────────────────────────────
 Single source of truth for all database operations.
-Four tables per v3 spec:
+Four tables:
   queue       — product work queue (pending → designed → published/failed)
   listings    — deduplication index of published titles
   run_log     — timestamped execution record per product
@@ -13,11 +13,32 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = _ROOT / "outputs" / "pipeline.db"
+
+SEO_REVIEW_JSON_COLUMNS = (
+    "original_tags",
+    "optimised_tags",
+    "added_tags",
+    "removed_tags",
+)
+
+LISTINGS_OPTIONAL_COLUMNS = {
+    "shopify_url": "TEXT",
+    "shopify_product_id": "TEXT",
+}
+
+RUN_LOG_OPTIONAL_COLUMNS = {
+    "shopify_url": "TEXT",
+}
+
+
+def _utc_now() -> datetime:
+    """Return UTC time in the same naive ISO format used by existing rows."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 @contextmanager
@@ -57,7 +78,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name    TEXT    NOT NULL,
                 title           TEXT    NOT NULL UNIQUE,
-                etsy_url        TEXT,
+                shopify_url     TEXT,
+                shopify_product_id TEXT,
                 published_at    TEXT    NOT NULL
             );
 
@@ -67,7 +89,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 phase           TEXT    NOT NULL,
                 status          TEXT    NOT NULL,  -- success / failed / skipped
                 message         TEXT,
-                etsy_url        TEXT,
+                shopify_url     TEXT,
                 run_at          TEXT    NOT NULL
             );
 
@@ -75,6 +97,10 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_name    TEXT    NOT NULL,
                 listing_title   TEXT    NOT NULL,
+                original_tags   TEXT    NOT NULL DEFAULT '[]',  -- JSON array
+                optimised_tags  TEXT    NOT NULL DEFAULT '[]',  -- JSON array
+                added_tags      TEXT    NOT NULL DEFAULT '[]',  -- JSON array
+                removed_tags    TEXT    NOT NULL DEFAULT '[]',  -- JSON array
                 missing_tags    TEXT    NOT NULL,  -- JSON array
                 competitor_tags TEXT    NOT NULL,  -- JSON array
                 gap_count       INTEGER NOT NULL,
@@ -95,6 +121,39 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 fetched_at      TEXT    NOT NULL
             );
         """)
+        _ensure_optional_columns(conn, "listings", LISTINGS_OPTIONAL_COLUMNS)
+        _ensure_optional_columns(conn, "run_log", RUN_LOG_OPTIONAL_COLUMNS)
+        _ensure_seo_review_columns(conn)
+
+
+def _ensure_optional_columns(
+    conn: sqlite3.Connection,
+    table_name: str,
+    columns: dict[str, str],
+) -> None:
+    """Add optional columns to existing tables without rewriting data."""
+    existing_columns = {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+    for column, column_type in columns.items():
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {column_type}")
+
+
+def _ensure_seo_review_columns(conn: sqlite3.Connection) -> None:
+    """Add audit columns to existing seo_review tables without losing old rows."""
+    existing_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(seo_review)").fetchall()
+    }
+
+    for column in SEO_REVIEW_JSON_COLUMNS:
+        if column not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE seo_review ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'"
+            )
 
 
 # ── Queue helpers ─────────────────────────────────────────────────────────────
@@ -109,7 +168,7 @@ def insert_queue_item(
     db_path: Path = DB_PATH,
 ) -> int:
     import json
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
     with get_conn(db_path) as conn:
         cur = conn.execute(
             """INSERT INTO queue
@@ -128,7 +187,7 @@ def get_queue_items(status: str, db_path: Path = DB_PATH) -> list[sqlite3.Row]:
 
 
 def update_queue_status(item_id: int, status: str, db_path: Path = DB_PATH) -> None:
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
     with get_conn(db_path) as conn:
         conn.execute(
             "UPDATE queue SET status = ?, updated_at = ? WHERE id = ?",
@@ -138,7 +197,7 @@ def update_queue_status(item_id: int, status: str, db_path: Path = DB_PATH) -> N
 
 def update_queue_status_by_name(product_name: str, status: str, db_path: Path = DB_PATH) -> None:
     """Update the most recent queue row for a product by name."""
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
     with get_conn(db_path) as conn:
         conn.execute(
             """UPDATE queue SET status = ?, updated_at = ?
@@ -154,8 +213,7 @@ def update_queue_status_by_name(product_name: str, status: str, db_path: Path = 
 
 def count_published_this_week(db_path: Path = DB_PATH) -> int:
     """Count listings published since Monday 00:00 UTC of the current week."""
-    from datetime import timedelta
-    today    = datetime.utcnow()
+    today    = _utc_now()
     monday   = today - timedelta(days=today.weekday())
     week_start = monday.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     with get_conn(db_path) as conn:
@@ -175,13 +233,12 @@ def hours_since_last_publish(db_path: Path = DB_PATH) -> float:
     if not row or not row["published_at"]:
         return 9999.0
     last = datetime.fromisoformat(row["published_at"])
-    return (datetime.utcnow() - last).total_seconds() / 3600
+    return (_utc_now() - last).total_seconds() / 3600
 
 
 def seconds_until_week_reset(db_path: Path = DB_PATH) -> int:
     """Seconds until next Monday 00:00 UTC (when the weekly publish counter resets)."""
-    from datetime import timedelta
-    now    = datetime.utcnow()
+    now    = _utc_now()
     days_ahead = (7 - now.weekday()) % 7 or 7          # 1-7
     next_monday = (now + timedelta(days=days_ahead)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -202,14 +259,23 @@ def title_exists(title: str, db_path: Path = DB_PATH) -> bool:
 def insert_listing(
     product_name: str,
     title: str,
-    etsy_url: str | None,
+    shopify_url: str | None,
+    shopify_product_id: str | int | None = None,
     db_path: Path = DB_PATH,
 ) -> None:
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
     with get_conn(db_path) as conn:
+        _ensure_optional_columns(conn, "listings", LISTINGS_OPTIONAL_COLUMNS)
         conn.execute(
-            "INSERT OR IGNORE INTO listings (product_name, title, etsy_url, published_at) VALUES (?, ?, ?, ?)",
-            (product_name, title, etsy_url, now),
+            """INSERT INTO listings
+               (product_name, title, shopify_url, shopify_product_id, published_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(title) DO UPDATE SET
+                   product_name = excluded.product_name,
+                   shopify_url = excluded.shopify_url,
+                   shopify_product_id = excluded.shopify_product_id,
+                   published_at = excluded.published_at""",
+            (product_name, title, shopify_url, str(shopify_product_id or ""), now),
         )
 
 
@@ -220,14 +286,15 @@ def log_run(
     phase: str,
     status: str,
     message: str = "",
-    etsy_url: str | None = None,
+    shopify_url: str | None = None,
     db_path: Path = DB_PATH,
 ) -> None:
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
     with get_conn(db_path) as conn:
+        _ensure_optional_columns(conn, "run_log", RUN_LOG_OPTIONAL_COLUMNS)
         conn.execute(
-            "INSERT INTO run_log (product_name, phase, status, message, etsy_url, run_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (product_name, phase, status, message, etsy_url, now),
+            "INSERT INTO run_log (product_name, phase, status, message, shopify_url, run_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (product_name, phase, status, message, shopify_url, now),
         )
 
 
@@ -238,21 +305,32 @@ def insert_seo_review(
     listing_title: str,
     missing_tags: list[str],
     competitor_tags: list[str],
+    original_tags: list[str] | None = None,
+    optimised_tags: list[str] | None = None,
+    added_tags: list[str] | None = None,
+    removed_tags: list[str] | None = None,
     db_path: Path = DB_PATH,
 ) -> None:
     import json
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
+    gap_count = len(added_tags) if added_tags is not None else len(missing_tags)
     with get_conn(db_path) as conn:
+        _ensure_seo_review_columns(conn)
         conn.execute(
             """INSERT INTO seo_review
-               (product_name, listing_title, missing_tags, competitor_tags, gap_count, reviewed_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (product_name, listing_title, original_tags, optimised_tags,
+                added_tags, removed_tags, missing_tags, competitor_tags, gap_count, reviewed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 product_name,
                 listing_title,
+                json.dumps(original_tags or []),
+                json.dumps(optimised_tags or []),
+                json.dumps(added_tags or []),
+                json.dumps(removed_tags or []),
                 json.dumps(missing_tags),
                 json.dumps(competitor_tags),
-                len(missing_tags),
+                gap_count,
                 now,
             ),
         )
@@ -276,7 +354,7 @@ def upsert_sale(
     Insert a sale row. Skips silently if transaction_id already exists.
     Returns True if a new row was inserted.
     """
-    now = datetime.utcnow().isoformat()
+    now = _utc_now().isoformat()
     with get_conn(db_path) as conn:
         cur = conn.execute(
             """INSERT OR IGNORE INTO sales
@@ -295,8 +373,7 @@ def get_sales_summary(days: int = 7, db_path: Path = DB_PATH) -> dict:
       total_revenue, gross_revenue, order_count, units_sold,
       best_product (name), best_product_revenue
     """
-    from datetime import timedelta
-    since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    since = (_utc_now() - timedelta(days=days)).isoformat()
     with get_conn(db_path) as conn:
         row = conn.execute(
             """SELECT

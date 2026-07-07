@@ -1,7 +1,7 @@
 """
 canva_product_creator.py — Phase 3B
 ──────────────────────────────────────
-Creates the actual digital product that buyers download from Etsy.
+Creates the actual digital product that buyers download from Shopify.
 
 This is separate from Phase 3 (mockup images). Phase 3 makes the
 listing look good; Phase 3B makes the thing people actually buy.
@@ -13,10 +13,10 @@ What it does:
   3. Gets a "Use template" share link via Canva Connect API
      → buyers click this and get their own editable Canva copy
   4. Exports a PDF version via Canva Connect API
-     → uploaded to Etsy as the digital download file
+     → embedded in the Shopify product description as a download link
   5. Saves template_link + pdf_path to meta.json + a _product.json record
      → Phase 4 (listing_builder) embeds the link in the description
-     → Phase 5 (etsy_api_uploader) attaches the PDF to the listing
+     → Phase 5 (shopify_uploader) publishes the listing with the link
 
 Run:
     python scripts/canva_product_creator.py "Product Name" [--price 9.99]
@@ -41,7 +41,7 @@ import sys
 import time
 from datetime import timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
@@ -299,7 +299,10 @@ def _call_api(prompt: str) -> dict[str, Any]:
             body: dict[str, Any] = resp.json()
         except ValueError:
             body = {}
-        auth_url = (body.get("error") or {}).get("auth_url") or body.get("auth_url")
+        err_obj = body.get("error")
+        err_map: dict[str, Any] = cast(dict[str, Any], err_obj) if isinstance(err_obj, dict) else {}
+        auth_url_obj = err_map.get("auth_url") or body.get("auth_url")
+        auth_url = auth_url_obj if isinstance(auth_url_obj, str) else ""
         if auth_url:
             raise RuntimeError(
                 f"\n  Canva requires authorisation. Visit:\n\n  {auth_url}\n\n"
@@ -313,14 +316,32 @@ def _call_api(prompt: str) -> dict[str, Any]:
 
 def _collect_text(response: dict[str, Any]) -> str:
     parts: list[str] = []
-    for block in response.get("content", []):
+    content_obj = response.get("content", [])
+    if not isinstance(content_obj, list):
+        return ""
+    content = cast(list[Any], content_obj)
+    for block_obj in content:
+        if not isinstance(block_obj, dict):
+            continue
+        block = cast(dict[str, Any], block_obj)
         btype = block.get("type", "")
         if btype == "text":
-            parts.append(block.get("text", ""))
+            text = block.get("text", "")
+            if isinstance(text, str):
+                parts.append(text)
         elif btype == "mcp_tool_result":
-            for sub in block.get("content", []):
-                if isinstance(sub, dict) and sub.get("type") == "text":
-                    parts.append(sub["text"])
+            sub_content_obj = block.get("content", [])
+            if not isinstance(sub_content_obj, list):
+                continue
+            sub_content = cast(list[Any], sub_content_obj)
+            for sub_obj in sub_content:
+                if not isinstance(sub_obj, dict):
+                    continue
+                sub = cast(dict[str, Any], sub_obj)
+                if sub.get("type") == "text":
+                    sub_text = sub.get("text")
+                    if isinstance(sub_text, str):
+                        parts.append(sub_text)
     return "\n".join(parts)
 
 
@@ -340,7 +361,7 @@ def _export_and_link(design_url: str, product_name: str) -> tuple[str, str]:
     """
     Given a Canva design URL:
       1. Get a "Use template" share link (for listing description)
-      2. Export as PDF (for Etsy digital download file)
+      2. Export as PDF (for Shopify digital download file)
 
     Returns (template_link, pdf_path) — either may be empty string on failure.
     """
@@ -393,7 +414,7 @@ _TEMPLATE_BLURB = """
 ──────────────────────────────────────
 ✦ HOW TO ACCESS YOUR TEMPLATE
 ──────────────────────────────────────
-After purchase, click this link to get your free editable Canva copy:
+After purchase, you'll receive this link to your free editable Canva copy:
 {link}
 
 No Canva account required to get started — Canva is free to use.
@@ -404,7 +425,7 @@ def _update_meta(product_name: str, template_link: str, pdf_path: str) -> None:
     """
     Add template_link and product_pdf to meta.json so listing_builder
     can read the extras. Also updates the SQLite queue row description
-    so the template link actually reaches the Etsy listing.
+    so the template link actually reaches the Shopify product.
     """
     link_blurb = _TEMPLATE_BLURB.format(link=template_link) if template_link else ""
 
@@ -417,7 +438,7 @@ def _update_meta(product_name: str, template_link: str, pdf_path: str) -> None:
         if pdf_path:
             meta["product_pdf"] = pdf_path
         if link_blurb and link_blurb not in meta.get("description", ""):
-            meta["description"] = (meta.get("description", "") + link_blurb)[:4000]
+            meta["description"] = (meta.get("description", "") + link_blurb)[:10000]
         meta_file.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"  [3B] meta.json updated with template_link")
     else:
@@ -425,7 +446,7 @@ def _update_meta(product_name: str, template_link: str, pdf_path: str) -> None:
 
     # ── 2. Also patch the SQLite queue row description ────────────────────────
     # listing_builder.py reads description from the queue row, not meta.json,
-    # so we must update the queue row here or the template link never reaches Etsy.
+    # so we must update the queue row here or the template link never reaches Shopify.
     if not template_link:
         return
     try:
@@ -439,7 +460,7 @@ def _update_meta(product_name: str, template_link: str, pdf_path: str) -> None:
                 (product_name,),
             ).fetchone()
             if row and link_blurb not in (row["description"] or ""):
-                new_desc = ((row["description"] or "") + link_blurb)[:4000]
+                new_desc = ((row["description"] or "") + link_blurb)[:10000]
                 conn.execute(
                     "UPDATE queue SET description = ?, updated_at = ? WHERE id = ?",
                     (new_desc, datetime.now(timezone.utc).isoformat(), row["id"]),
@@ -527,7 +548,7 @@ def create_product(product_name: str, price: float | None = None) -> int:
 
     # Save product record
     OUTPUTS_DIR.mkdir(exist_ok=True)
-    record = {
+    record: dict[str, Any] = {
         "product_name":  product_name,
         "price":         price,
         "product_type":  ptype,
@@ -552,7 +573,7 @@ def create_product(product_name: str, price: float | None = None) -> int:
     print(f"\n  [3B] ✓ Phase 3B complete: {ptype} template — {status}")
 
     log_run(product_name, "canva_product_creator", "success",
-            f"type={ptype}, pages={len(pages)}, {status}")
+            f"type={ptype}, pages={len(pages)}, {status} — ready for Shopify upload")
     return 0
 
 

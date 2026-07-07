@@ -1,23 +1,24 @@
 """
 sales_tracker.py — Daily sales & revenue sync
 ───────────────────────────────────────────────
-Pulls transaction data from the Etsy Open API v3, maps each sale to a
+Pulls order data from the Shopify Admin REST API, maps each sale to a
 product name via the listings table, and stores everything in the
 SQLite `sales` table.
 
 Run:
-    python scripts/sales_tracker.py          — sync new transactions only
-    python scripts/sales_tracker.py --full   — re-fetch all transactions (slow)
+    python scripts/sales_tracker.py          — sync new orders only
+    python scripts/sales_tracker.py --full   — re-fetch all orders (slow)
 
 Called by loop.sh once per day alongside the email digest.
 
-Etsy API used:
-    GET /v3/application/shops/{shop_id}/transactions
-    Fields: transaction_id, listing_id, title, price, quantity,
-            seller_fees, create_timestamp
+Shopify API used:
+    GET /admin/api/2024-01/orders.json
+    Fields: id, line_items (product_id, title, price, quantity),
+            total_price, total_discounts, created_at, financial_status
 
 Requires in .env:
-    ETSY_API_KEY, ETSY_ACCESS_TOKEN, ETSY_REFRESH_TOKEN, ETSY_SHOP_ID
+    SHOPIFY_STORE_DOMAIN   — e.g. your-store.myshopify.com
+    SHOPIFY_ACCESS_TOKEN   — Admin API access token (shpat_...)
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-import requests
 from dotenv import dotenv_values, load_dotenv
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -43,228 +44,227 @@ from db import (
     log_run,
     upsert_sale,
 )
-from api_retry import rget, rpost
+from api_retry import rget
 
-ETSY_API_BASE = "https://openapi.etsy.com/v3/application"
-TOKEN_URL     = "https://api.etsy.com/v3/public/oauth/token"
-PAGE_SIZE     = 100
+API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-01")
+PAGE_SIZE   = 250  # Shopify max per page
 
 
 # ── Credentials ───────────────────────────────────────────────────────────────
 
 def _load_creds() -> dict[str, str]:
-    return dict(dotenv_values(ENV_PATH))
+    return {k: v for k, v in dotenv_values(ENV_PATH).items() if v is not None}
 
 
-def _save_creds(updates: dict[str, str]) -> None:
-    env = _load_creds()
-    env.update(updates)
-    ENV_PATH.write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
+def _normalize_domain(domain: str) -> str:
+    return domain.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
 
 
-def _refresh_token(creds: dict) -> dict:
-    resp = rpost(
-        TOKEN_URL,
-        data={
-            "grant_type":    "refresh_token",
-            "client_id":     creds["ETSY_API_KEY"],
-            "refresh_token": creds["ETSY_REFRESH_TOKEN"],
-        },
-        timeout=30,
-        _label="Etsy token refresh",
-    )
-    if not resp.ok:
-        raise RuntimeError(f"Token refresh failed ({resp.status_code}): {resp.text}")
-    data = resp.json()
-    creds["ETSY_ACCESS_TOKEN"]  = data["access_token"]
-    creds["ETSY_REFRESH_TOKEN"] = data.get("refresh_token", creds["ETSY_REFRESH_TOKEN"])
-    _save_creds({
-        "ETSY_ACCESS_TOKEN":  creds["ETSY_ACCESS_TOKEN"],
-        "ETSY_REFRESH_TOKEN": creds["ETSY_REFRESH_TOKEN"],
-    })
-    return creds
+def _api_base(domain: str) -> str:
+    domain = _normalize_domain(domain)
+    return f"https://{domain}/admin/api/{API_VERSION}"
 
 
-def _hdrs(creds: dict) -> dict[str, str]:
-    return {
-        "x-api-key":     creds["ETSY_API_KEY"],
-        "Authorization": f"Bearer {creds['ETSY_ACCESS_TOKEN']}",
-    }
+def _hdrs(access_token: str) -> dict[str, str]:
+    return {"X-Shopify-Access-Token": access_token}
 
 
-# ── Listing ID → product name cache ───────────────────────────────────────────
+# ── Product ID → product name cache ───────────────────────────────────────────
 
 def _build_listing_map() -> dict[str, str]:
     """
-    Build a map of etsy listing_id → product_name from the listings table.
-    Extracted from stored etsy_url e.g. https://www.etsy.com/listing/123456/...
+    Build a map of Shopify product IDs and handles to local product names.
+    Orders provide product_id; handles are kept as a fallback for older rows.
     """
     mapping: dict[str, str] = {}
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT product_name, etsy_url FROM listings WHERE etsy_url IS NOT NULL"
+            """SELECT product_name, shopify_url, shopify_product_id
+               FROM listings
+               WHERE shopify_url IS NOT NULL OR shopify_product_id IS NOT NULL"""
         ).fetchall()
     for row in rows:
-        url = row["etsy_url"] or ""
+        product_id = str(row["shopify_product_id"] or "").strip()
+        if product_id:
+            mapping[product_id] = row["product_name"]
+
+        url = row["shopify_url"] or ""
         parts = url.rstrip("/").split("/")
         for i, part in enumerate(parts):
-            if part == "listing" and i + 1 < len(parts):
+            if part == "products" and i + 1 < len(parts):
                 mapping[parts[i + 1]] = row["product_name"]
                 break
     return mapping
 
 
-# ── Transaction parsing ───────────────────────────────────────────────────────
+# ── Order parsing ─────────────────────────────────────────────────────────────
 
-def _parse_amount(price_obj: dict | None) -> float:
-    """Convert Etsy price object {"amount": 799, "divisor": 100} → 7.99."""
-    if not price_obj:
-        return 0.0
-    try:
-        return round(price_obj["amount"] / price_obj["divisor"], 2)
-    except (KeyError, ZeroDivisionError, TypeError):
-        return 0.0
-
-
-def _parse_transaction(tx: dict, listing_map: dict[str, str]) -> dict | None:
+def _parse_order(order: dict[str, Any], listing_map: dict[str, str]) -> list[dict[str, Any]]:
     """
-    Convert a raw Etsy transaction dict into a normalised sale dict.
-    Returns None if the transaction is missing essential fields.
+    Convert a raw Shopify order into a list of normalised sale dicts (one per line item).
+    Returns empty list if order is missing essential fields or not paid.
     """
-    tx_id = str(tx.get("transaction_id", ""))
-    if not tx_id:
-        return None
+    financial_status = order.get("financial_status", "")
+    if financial_status not in ("paid", "partially_paid"):
+        return []
 
-    listing_id = str(tx.get("listing_id", ""))
-    title      = tx.get("title") or tx.get("listing", {}).get("title", "")
-    quantity   = int(tx.get("quantity", 1))
+    order_id = str(order.get("id", ""))
+    if not order_id:
+        return []
 
-    gross_amount = _parse_amount(tx.get("price"))
-    total_gross  = round(gross_amount * quantity, 2)
-
-    # Seller fees (Etsy transaction fee + payment processing)
-    seller_fees  = _parse_amount(tx.get("seller_fees"))
-    net_amount   = round(total_gross - abs(seller_fees), 2)
-
-    # Timestamp — Etsy returns Unix epoch integers
-    ts = tx.get("create_timestamp") or tx.get("created_timestamp") or 0
     try:
-        sale_date = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
-    except (ValueError, TypeError, OSError):
-        sale_date = datetime.utcnow().isoformat()
+        sale_date = datetime.fromisoformat(
+            order["created_at"].replace("Z", "+00:00")
+        ).isoformat()
+    except (KeyError, ValueError, AttributeError):
+        sale_date = datetime.now(tz=timezone.utc).isoformat()
 
-    product_name = listing_map.get(listing_id, "")
+    sales: list[dict[str, Any]] = []
+    for item in order.get("line_items", []):
+        item_id    = str(item.get("id", ""))
+        product_id = str(item.get("product_id", ""))
+        title      = (item.get("title") or "")[:200]
+        quantity   = int(item.get("quantity", 1))
+        gross_unit = float(item.get("price", "0"))
+        total_gross = round(gross_unit * quantity, 2)
 
-    return {
-        "transaction_id": tx_id,
-        "listing_id":     listing_id,
-        "product_name":   product_name,
-        "title":          title[:200],
-        "gross_amount":   total_gross,
-        "amount":         net_amount,
-        "quantity":       quantity,
-        "currency":       (tx.get("price") or {}).get("currency_code", "USD"),
-        "sale_date":      sale_date,
+        # Shopify fees: ~2.9% + $0.30 payment processing; no direct fee field in orders
+        # Approximate net as gross minus payment processing estimate
+        payment_fee = round(total_gross * 0.029 + 0.30, 2)
+        net_amount  = round(total_gross - payment_fee, 2)
+
+        transaction_id = f"shopify_{order_id}_{item_id}"
+        product_name   = listing_map.get(product_id, "")
+
+        currency = order.get("currency", "USD")
+
+        sales.append({
+            "transaction_id": transaction_id,
+            "listing_id":     product_id,
+            "product_name":   product_name,
+            "title":          title,
+            "gross_amount":   total_gross,
+            "amount":         net_amount,
+            "quantity":       quantity,
+            "currency":       currency,
+            "sale_date":      sale_date,
+        })
+
+    return sales
+
+
+# ── Fetch orders ──────────────────────────────────────────────────────────────
+
+def _fetch_orders(
+    domain: str,
+    access_token: str,
+    created_at_min: str | None = None,
+    page_info: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """
+    Fetch one page of orders from the Shopify API.
+    Returns (orders, next_page_info) — next_page_info is None on the last page.
+    Shopify uses cursor-based pagination via Link header.
+    """
+    params: dict[str, Any] = {
+        "status":  "any",
+        "limit":   PAGE_SIZE,
+        "fields":  "id,line_items,total_price,currency,financial_status,created_at",
     }
-
-
-# ── Fetch transactions ────────────────────────────────────────────────────────
-
-def _fetch_transactions(
-    creds: dict,
-    min_created: int | None = None,
-    offset: int = 0,
-) -> list[dict]:
-    """
-    Fetch one page of transactions from the Etsy API.
-    min_created: Unix timestamp — only fetch sales after this time.
-    """
-    params: dict = {"limit": PAGE_SIZE, "offset": offset}
-    if min_created:
-        params["min_created"] = min_created
+    if created_at_min:
+        params["created_at_min"] = created_at_min
+    if page_info:
+        params = {"page_info": page_info, "limit": PAGE_SIZE}
 
     resp = rget(
-        f"{ETSY_API_BASE}/shops/{creds['ETSY_SHOP_ID']}/transactions",
-        headers=_hdrs(creds),
+        f"{_api_base(domain)}/orders.json",
+        headers=_hdrs(access_token),
         params=params,
         timeout=30,
-        _label="Etsy transactions",
+        _label="Shopify orders",
     )
-
-    if resp.status_code == 401:
-        creds = _refresh_token(creds)
-        resp = rget(
-            f"{ETSY_API_BASE}/shops/{creds['ETSY_SHOP_ID']}/transactions",
-            headers=_hdrs(creds),
-            params=params,
-            timeout=30,
-            _label="Etsy transactions (retry after refresh)",
-        )
-
     resp.raise_for_status()
-    return resp.json().get("results", [])
+
+    orders = resp.json().get("orders", [])
+
+    # Parse cursor for next page from Link header
+    next_page_info: str | None = None
+    link_header = resp.headers.get("Link", "")
+    if 'rel="next"' in link_header:
+        for part in link_header.split(","):
+            if 'rel="next"' in part:
+                # Extract page_info from URL: <url?page_info=xyz>; rel="next"
+                url_part = part.split(";")[0].strip().strip("<>")
+                for param in url_part.split("?")[-1].split("&"):
+                    if param.startswith("page_info="):
+                        next_page_info = param.split("=", 1)[1]
+                        break
+
+    return orders, next_page_info
 
 
 # ── Main sync ─────────────────────────────────────────────────────────────────
 
-def sync_sales(full: bool = False) -> dict:
+def sync_sales(full: bool = False) -> dict[str, Any]:
     """
-    Sync Etsy transactions to the local sales table.
+    Sync Shopify orders to the local sales table.
 
     Args:
-        full: If True, re-fetch all transactions (ignores last sync date).
+        full: If True, re-fetch all orders (ignores last sync date).
 
     Returns:
         Summary dict with new_sales, total_revenue_7d, etc.
     """
-    init_db()  # ensure sales table exists
+    init_db()
 
     creds = _load_creds()
-    for key in ("ETSY_API_KEY", "ETSY_ACCESS_TOKEN", "ETSY_SHOP_ID"):
-        if not creds.get(key):
-            raise RuntimeError(f"{key} not set in .env — run: python scripts/etsy_oauth.py")
+    domain       = _normalize_domain(creds.get("SHOPIFY_STORE_DOMAIN", ""))
+    access_token = creds.get("SHOPIFY_ACCESS_TOKEN", "")
+
+    if not domain or not access_token:
+        raise RuntimeError(
+            "SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN not set in .env — "
+            "run: python scripts/shopify_setup.py"
+        )
 
     listing_map = _build_listing_map()
     print(f"  [sales] Listing map: {len(listing_map)} products")
 
-    # Determine how far back to fetch
-    min_created: int | None = None
+    created_at_min: str | None = None
     if not full:
         last_date = get_latest_sale_date()
         if last_date:
-            try:
-                dt = datetime.fromisoformat(last_date.replace("Z", "+00:00"))
-                min_created = int(dt.timestamp())
-                print(f"  [sales] Incremental sync from: {last_date[:10]}")
-            except (ValueError, AttributeError):
-                pass
-    if full or min_created is None:
-        print(f"  [sales] Full sync — fetching all transactions")
+            created_at_min = last_date
+            print(f"  [sales] Incremental sync from: {last_date[:10]}")
+    if full or created_at_min is None:
+        print(f"  [sales] Full sync — fetching all orders")
 
-    new_count = 0
-    offset    = 0
+    new_count  = 0
+    page_info: str | None = None
 
     while True:
-        txs = _fetch_transactions(creds, min_created=min_created, offset=offset)
-        if not txs:
+        orders, next_page_info = _fetch_orders(
+            domain, access_token,
+            created_at_min=created_at_min if not page_info else None,
+            page_info=page_info,
+        )
+        if not orders:
             break
 
-        for tx in txs:
-            sale = _parse_transaction(tx, listing_map)
-            if not sale:
-                continue
-            inserted = upsert_sale(**sale)
-            if inserted:
-                new_count += 1
+        for order in orders:
+            for sale in _parse_order(order, listing_map):
+                inserted = upsert_sale(**sale)
+                if inserted:
+                    new_count += 1
 
-        if len(txs) < PAGE_SIZE:
-            break  # last page
-        offset += PAGE_SIZE
+        if not next_page_info:
+            break
+        page_info = next_page_info
 
     summary = get_sales_summary(days=7)
     summary["new_transactions"] = new_count
 
-    print(f"  [sales] ✓ Synced {new_count} new transaction(s)")
+    print(f"  [sales] ✓ Synced {new_count} new order(s)")
     print(f"  [sales] Last 7 days: {summary['order_count']} orders | "
           f"${summary['total_revenue']:.2f} net | "
           f"${summary['gross_revenue']:.2f} gross")

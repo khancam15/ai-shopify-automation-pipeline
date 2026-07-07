@@ -2,8 +2,8 @@
 file_organizer.py  —  Phase 4.5
 ──────────────────────────────────
 Moves validated files (listing.json + mockup images) into
-04_Assets/ReadyToUpload/[ProductName]/ so Playwright has a single
-clean source directory to read from.
+04_Assets/ReadyToUpload/[ProductName]/ so shopify_uploader has a
+single clean source directory to read from.
 
 Run:
     python scripts/file_organizer.py <product_name>
@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 from db import log_run
-import json
 
 _ROOT         = Path(__file__).resolve().parent.parent
 PRODUCTS_DIR  = _ROOT / "02_Products"

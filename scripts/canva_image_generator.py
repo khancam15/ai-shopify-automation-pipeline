@@ -2,7 +2,7 @@
 canva_image_generator.py — Phase 3
 ────────────────────────────────────
 Fully autonomous Canva image generator. Reads listing content from
-outputs/master.txt, generates 6 conversion-optimised Etsy mockup
+outputs/master.txt, generates 6 conversion-optimised Shopify product
 images via Anthropic API + Canva remote MCP, exports each as a JPEG,
 downloads them to 02_Products/[ProductName]/Mockups/, and queues the
 product for Phase 4.
@@ -10,7 +10,7 @@ product for Phase 4.
 After this script exits 0, the product is in the queue with images
 on disk — Phase 4 can run immediately in the same loop cycle.
 
-Image slots (Etsy conversion strategy):
+Image slots (Shopify conversion strategy):
   1 — Before/After hero    (stop the scroll — highest CTR format)
   2 — Features + price     (value proof — price anchoring)
   3 — Filled-in preview    (remove doubt — show exactly what they get)
@@ -46,6 +46,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Any, TypedDict, cast
 
 from dotenv import load_dotenv
 
@@ -76,8 +77,21 @@ ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 CANVA_MCP_URL = "https://mcp.canva.com/mcp"
 MODEL         = "claude-opus-4-5"
 
-# ── 6-slot Etsy conversion strategy ──────────────────────────────────────────
-SLOTS = [
+
+class SlotSpec(TypedDict):
+    slot: int
+    role: str
+    desc: str
+
+
+class ImageEntry(TypedDict):
+    slot: int
+    role: str
+    design_url: str
+    export_url: str
+
+# ── 6-slot Shopify conversion strategy ──────────────────────────────────────────
+SLOTS: list[SlotSpec] = [
     {
         "slot": 1,
         "role": "Before/After split hero",
@@ -87,7 +101,7 @@ SLOTS = [
             "same creator WITH the template — polished, professional, landing brand deals. "
             "Bold 'BEFORE → AFTER' label spanning the centre split. Large headline across the top: "
             "'[PRODUCT] — The Template That Gets You Hired'. "
-            "This is the highest CTR format used by 30% of top Etsy sellers."
+            "This is the highest CTR format used by 30% of top Shopify sellers."
         ),
     },
     {
@@ -161,7 +175,7 @@ def _load_brand_context() -> str:
             "Serif headlines, clean sans body, minimal editorial layout."
         )
     text   = BRAND_GUIDE.read_text(encoding="utf-8")
-    lines  = []
+    lines: list[str] = []
     in_sec = False
     for line in text.split("\n"):
         lo = line.lower()
@@ -205,11 +219,11 @@ def _build_prompt(
         for s in SLOTS
     )
 
-    return f"""You are generating 6 Etsy listing mockup images for a digital product using Canva, then exporting each one.
+    return f"""You are generating 6 Shopify product mockup images for a digital product using Canva, then exporting each one.
 
 PRODUCT:
   Name:        {product_name}
-  Etsy title:  {title}
+  Shopify title:  {title}
   Price:       ${price}
   Keywords:    {", ".join(tags[:8])}
   Description: {description[:250]}
@@ -227,7 +241,7 @@ YOUR STEPS — execute fully in order:
    IMAGE_[N]_DESIGN: https://www.canva.com/design/...
 
 DESIGN RULES (apply to all 6):
-- Format: instagram_post — 1080×1350 portrait (Etsy listing optimal)
+- Format: instagram_post — 1080×1350 portrait (Shopify product optimal)
 - Cream #faf7f2 background, blush #c4a0a0 accents, dark text for readability
 - Serif headlines, clean sans body, generous white space, premium finish
 - Include product name and ${price} where relevant to each image's purpose
@@ -240,13 +254,13 @@ IMAGE SPECIFICATIONS:
 Generate all 6 images now. Output each IMAGE_[N]_DESIGN line as you finish each one."""
 
 
-def _call_api(prompt: str) -> dict:
+def _call_api(prompt: str) -> dict[str, Any]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set in .env")
 
     canva_token = os.getenv("CANVA_MCP_TOKEN", "")
-    mcp_server: dict = {"type": "url", "url": CANVA_MCP_URL, "name": "canva"}
+    mcp_server: dict[str, Any] = {"type": "url", "url": CANVA_MCP_URL, "name": "canva"}
     if canva_token:
         mcp_server["authorization_token"] = canva_token
 
@@ -269,10 +283,13 @@ def _call_api(prompt: str) -> dict:
 
     if resp.status_code == 401:
         try:
-            body = resp.json()
+            body: dict[str, Any] = resp.json()
         except ValueError:
             body = {}
-        auth_url = (body.get("error") or {}).get("auth_url") or body.get("auth_url")
+        err_obj = body.get("error")
+        err_map: dict[str, Any] = cast(dict[str, Any], err_obj) if isinstance(err_obj, dict) else {}
+        auth_url_obj = err_map.get("auth_url") or body.get("auth_url")
+        auth_url = auth_url_obj if isinstance(auth_url_obj, str) else ""
         if auth_url:
             raise RuntimeError(
                 f"\n  Canva requires authorisation. Visit this URL once in your browser:\n\n"
@@ -287,26 +304,44 @@ def _call_api(prompt: str) -> dict:
     return resp.json()
 
 
-def _collect_text(response: dict) -> str:
+def _collect_text(response: dict[str, Any]) -> str:
     """Flatten all text content from the API response into one string."""
-    parts = []
-    for block in response.get("content", []):
+    parts: list[str] = []
+    content_obj = response.get("content", [])
+    if not isinstance(content_obj, list):
+        return ""
+    content = cast(list[Any], content_obj)
+    for block_obj in content:
+        if not isinstance(block_obj, dict):
+            continue
+        block = cast(dict[str, Any], block_obj)
         btype = block.get("type", "")
         if btype == "text":
-            parts.append(block.get("text", ""))
+            text = block.get("text", "")
+            if isinstance(text, str):
+                parts.append(text)
         elif btype == "mcp_tool_result":
-            for sub in block.get("content", []):
-                if isinstance(sub, dict) and sub.get("type") == "text":
-                    parts.append(sub["text"])
+            sub_content_obj = block.get("content", [])
+            if not isinstance(sub_content_obj, list):
+                continue
+            sub_content = cast(list[Any], sub_content_obj)
+            for sub_obj in sub_content:
+                if not isinstance(sub_obj, dict):
+                    continue
+                sub = cast(dict[str, Any], sub_obj)
+                if sub.get("type") == "text":
+                    sub_text = sub.get("text")
+                    if isinstance(sub_text, str):
+                        parts.append(sub_text)
     return "\n".join(parts)
 
 
-def _parse_image_urls(text: str) -> list[dict]:
+def _parse_image_urls(text: str) -> list[ImageEntry]:
     """
     Parse structured IMAGE_N_DESIGN / IMAGE_N_EXPORT lines from the response.
     Falls back to scanning for canva.com/design/ URLs if structured lines aren't found.
     """
-    results: dict[int, dict] = {}
+    results: dict[int, dict[str, str]] = {}
 
     # Primary: structured format
     design_re = re.compile(r"IMAGE_(\d+)_DESIGN:\s*(https://[^\s]+)", re.IGNORECASE)
@@ -336,9 +371,9 @@ def _parse_image_urls(text: str) -> list[dict]:
             results[i]["export_url"] = url
 
     # Build ordered list up to 6
-    output = []
+    output: list[ImageEntry] = []
     for slot_idx in range(1, 7):
-        entry = results.get(slot_idx, {})
+        entry: dict[str, str] = results.get(slot_idx, {})
         if entry.get("design_url") or entry.get("export_url"):
             output.append({
                 "slot":       slot_idx,
@@ -350,7 +385,7 @@ def _parse_image_urls(text: str) -> list[dict]:
     return output
 
 
-def _export_via_api(image_data: list[dict]) -> list[dict]:
+def _export_via_api(image_data: list[ImageEntry]) -> list[ImageEntry]:
     """
     For each image entry that has a design_url but no reliable export_url,
     call the Canva Connect API to generate a proper JPEG export URL.
@@ -369,14 +404,19 @@ def _export_via_api(image_data: list[dict]) -> list[dict]:
         print(f"  [3] Canva API init failed: {exc} — falling back to MCP export URLs")
         return image_data
 
-    updated = []
+    updated: list[ImageEntry] = []
     for img in image_data:
-        entry = dict(img)
-        design_url = entry.get("design_url", "")
+        entry: ImageEntry = {
+            "slot": img["slot"],
+            "role": img["role"],
+            "design_url": img["design_url"],
+            "export_url": img["export_url"],
+        }
+        design_url = entry["design_url"]
 
         # Skip if we already have a working export URL from MCP
         # (export_url is only set if MCP returned a structured IMAGE_N_EXPORT line)
-        if entry.get("export_url") and "canva.com" not in entry["export_url"]:
+        if entry["export_url"] and "canva.com" not in entry["export_url"]:
             # Already a direct CDN URL — keep it
             updated.append(entry)
             continue
@@ -402,7 +442,7 @@ def _export_via_api(image_data: list[dict]) -> list[dict]:
     return updated
 
 
-def _download_images(product_name: str, image_data: list[dict]) -> list[Path]:
+def _download_images(product_name: str, image_data: list[ImageEntry]) -> list[Path]:
     """
     Download exported JPEGs to 02_Products/[ProductName]/Mockups/.
 
@@ -419,7 +459,7 @@ def _download_images(product_name: str, image_data: list[dict]) -> list[Path]:
     # Step 1: Enrich image_data with API export URLs where possible
     image_data = _export_via_api(image_data)
 
-    saved = []
+    saved: list[Path] = []
     for img in image_data:
         url = img.get("export_url") or img.get("design_url")
         if not url:
@@ -457,7 +497,7 @@ def _download_images(product_name: str, image_data: list[dict]) -> list[Path]:
     return saved
 
 
-def _ensure_queued(product_name: str, meta: dict) -> int | None:
+def _ensure_queued(product_name: str, meta: dict[str, Any]) -> int | None:
     """
     Add product to the queue if the title hasn't been published before.
     Returns queue_id on insert, None if already exists.
@@ -505,14 +545,20 @@ def generate_images(product_name: str, price: float | None = None) -> int:
 
     # Load listing data for prompt
     meta_file = INBOX_DIR / product_name / "meta.json"
+    meta: dict[str, Any]
     if meta_file.exists():
-        meta        = json.loads(meta_file.read_text(encoding="utf-8"))
-        title       = meta.get("title", product_name)
-        tags        = meta.get("tags", [])
-        description = meta.get("description", "")
+        loaded_meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        meta = cast(dict[str, Any], loaded_meta) if isinstance(loaded_meta, dict) else {}
+        title_obj = meta.get("title", product_name)
+        tags_obj = meta.get("tags", [])
+        description_obj = meta.get("description", "")
+        title = title_obj if isinstance(title_obj, str) else product_name
+        description = description_obj if isinstance(description_obj, str) else ""
+        tags_raw = cast(list[Any], tags_obj) if isinstance(tags_obj, list) else []
+        tags = [str(t) for t in tags_raw]
     else:
         title       = product_name
-        tags        = []
+        tags = []
         description = ""
         meta        = {
             "product_name": product_name,
@@ -588,7 +634,7 @@ def generate_images(product_name: str, price: float | None = None) -> int:
 
     # Save design record
     OUTPUTS_DIR.mkdir(exist_ok=True)
-    record = {
+    record: dict[str, Any] = {
         "product_name": product_name,
         "price":        price,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

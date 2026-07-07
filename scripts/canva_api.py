@@ -129,7 +129,7 @@ class CanvaClient:
         env_path = _ROOT / ".env"
         existing: dict[str, str] = {}
         if env_path.exists():
-            existing = dict(dotenv_values(env_path))
+            existing = {k: v for k, v in dotenv_values(env_path).items() if v is not None}
         existing.update(updates)
         lines = [f"{k}={v}\n" for k, v in existing.items()]
         env_path.write_text("".join(lines), encoding="utf-8")
@@ -327,7 +327,7 @@ class CanvaClient:
 
         When a buyer clicks this link, Canva creates their own editable
         copy — they never touch the original. This is the standard
-        delivery mechanism for Canva templates sold on Etsy.
+        delivery mechanism for Canva templates sold on Shopify.
 
         Returns a canva.com URL string.
         Falls back to a preview URL if the API endpoint is unavailable.

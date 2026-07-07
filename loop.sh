@@ -77,8 +77,8 @@ fi
 echo $$ > "$PID_FILE"
 
 # ── Pre-flight credential check ───────────────────────────────────────────────
-# Validates + auto-refreshes Etsy and Canva tokens before doing any real work.
-# Exits the loop immediately if Etsy credentials are broken (non-recoverable).
+# Validates Shopify, Canva, and Anthropic credentials before doing any real work.
+# Exits the loop immediately if Shopify credentials are broken (non-recoverable).
 if ! "$PYTHON" scripts/preflight.py; then
     echo "[loop] Pre-flight failed — fix credentials and restart. Exiting." >&2
     exit 1
@@ -182,7 +182,7 @@ PYEOF
 
         # SEO analysis + auto-apply on published listings
         # Processes up to 10 listings per maintain cycle (oldest-SEO-reviewed first)
-        # to avoid Etsy API rate limits while still improving the full catalogue over time.
+        # to avoid Shopify API rate limits while still improving the full catalogue over time.
         "$PYTHON" - 2>>"$LOG_FILE" <<'PYEOF' || _err "Maintain SEO scan failed — non-fatal."
 import sys, subprocess
 sys.path.insert(0, 'scripts')
@@ -240,7 +240,7 @@ PYEOF
     # Phase 1: Brand Builder — runs once every 7 days
     BRAND_AGE=$(_file_age_secs "$SCRIPT_DIR/outputs/brand_guide.md")
     if [[ "$BRAND_AGE" -gt "$WEEK_LIMIT_SECS" ]]; then
-        _run_phase "Phase 1 (brand builder)" "$PYTHON" scripts/etsy_brand_crew.py \
+        _run_phase "Phase 1 (brand builder)" "$PYTHON" scripts/shopify_brand_crew.py \
             || { _log "Cycle $CYCLE aborted at phase 1."; _sleep_or_exit; continue; }
     else
         _log "Phase 1 skipped — brand_guide.md is $((BRAND_AGE / 3600))h old (refreshes after 168h)"
@@ -249,7 +249,7 @@ PYEOF
     # Phase 2: Listing content — runs once every 7 days (same cadence as brand)
     MASTER_AGE=$(_file_age_secs "$SCRIPT_DIR/outputs/master.txt")
     if [[ "$MASTER_AGE" -gt "$WEEK_LIMIT_SECS" ]]; then
-        _run_phase "Phase 2 (launch executor)" "$PYTHON" scripts/etsy_launch_executor.py \
+        _run_phase "Phase 2 (shopify listing executor)" "$PYTHON" scripts/shopify_autonomous.py \
             || { _log "Cycle $CYCLE aborted at phase 2."; _sleep_or_exit; continue; }
     else
         _log "Phase 2 skipped — master.txt is $((MASTER_AGE / 3600))h old (refreshes after 168h)"
@@ -344,8 +344,8 @@ PYEOF
     _run_phase "Phase 4.5 (file organizer)"   "$PYTHON" scripts/file_organizer.py       "$PRODUCT" \
         || { _log "Cycle $CYCLE aborted at phase 4.5."; _sleep_or_exit; continue; }
 
-    # Phase 5: Publish to Etsy via API
-    _run_phase "Phase 5 (etsy api uploader)"  "$PYTHON" scripts/etsy_api_uploader.py    "$PRODUCT" \
+    # Phase 5: Publish to Shopify via Admin API
+    _run_phase "Phase 5 (shopify uploader)"   "$PYTHON" scripts/shopify_uploader.py     "$PRODUCT" \
         || { _log "Cycle $CYCLE aborted at phase 5."; _sleep_or_exit; continue; }
 
     # Phase 6: SEO analysis on the new listing (non-fatal)

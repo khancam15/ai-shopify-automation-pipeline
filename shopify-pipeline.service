@@ -6,12 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/ai-shopify-automation-pipeline
-ExecStart=/root/ai-shopify-automation-pipeline/loop.sh
+WorkingDirectory=/root/multi-agent-commerce-pipeline
+ExecStart=/root/multi-agent-commerce-pipeline/loop.sh
 Restart=always
 RestartSec=30
-StandardOutput=append:/root/ai-shopify-automation-pipeline/logs/loop.log
-StandardError=append:/root/ai-shopify-automation-pipeline/logs/loop_errors.log
+StandardOutput=append:/root/multi-agent-commerce-pipeline/logs/loop.log
+StandardError=append:/root/multi-agent-commerce-pipeline/logs/loop_errors.log
 
 [Install]
 WantedBy=multi-user.target

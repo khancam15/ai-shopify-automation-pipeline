@@ -1,5 +1,5 @@
 [Unit]
-Description=AI Shopify Automation Pipeline - autonomous loop
+Description=Multi-Agent Commerce Pipeline - autonomous loop
 After=network-online.target
 Wants=network-online.target
 

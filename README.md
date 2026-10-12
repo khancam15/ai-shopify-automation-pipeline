@@ -1,4 +1,4 @@
-# AI Shopify Automation Pipeline
+# Multi-Agent Commerce Pipeline
 
 Autonomous pipeline for building digital products, generating Canva mockups and downloadable templates, publishing products to Shopify, syncing sales, and running post-publish SEO maintenance.
 

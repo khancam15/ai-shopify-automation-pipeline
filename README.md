@@ -2,6 +2,21 @@
 
 Autonomous pipeline for building digital products, generating Canva mockups and downloadable templates, publishing products to Shopify, syncing sales, and running post-publish SEO maintenance.
 
+## Overview
+
+| Layer | Technology |
+|---|---|
+| Agents | CrewAI agents running on Claude through the Anthropic API |
+| Design | Canva remote MCP server, called through the Anthropic API MCP connector, with a Canva Connect API fallback for exports |
+| Commerce | Shopify Admin API for product publishing, sales sync, and SEO updates |
+| Runtime | Python on a Linux VPS, managed by a systemd service |
+| Data | SQLite for run history and product state |
+| Quality | Automated tests, gitleaks secret scanning, and pip-audit dependency checks in GitHub Actions |
+
+## Built with AI Assistance
+
+This project was designed and built with Claude as a working partner. Claude helped plan the architecture, write and debug the Python modules, and review the code for security. I defined the requirements, made the design decisions, and reviewed and tested generated code before merging it. API keys and tokens are stored only in a local `.env` file and are never committed or shared.
+
 ## Workflow
 
 ```text

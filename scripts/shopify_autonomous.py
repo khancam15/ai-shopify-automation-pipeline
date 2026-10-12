@@ -105,7 +105,7 @@ def generate_listing_content(task: str, guide: str, week: str) -> str:
         model=MODEL,
         max_tokens=2000,
         system=(
-            "You are an autonomous Shopify product content generator for Creator Kit. "
+            f"You are an autonomous Shopify product content generator for {os.getenv('BRAND_NAME', 'Your Brand')}. "
             "Generate complete, ready-to-use Shopify product listing content in structured format. "
             "Output MUST follow the exact format below so it can be parsed automatically."
         ),
@@ -180,7 +180,7 @@ def run_week(key: str, tasks: list[dict[str, Any]], guide: str, state: dict[str,
 
 def main() -> None:
     console.print(Panel(
-        "[bold]Creator Kit — Autonomous Listing Generator[/bold]\n"
+        f"[bold]{os.getenv('BRAND_NAME', 'Your Brand')} — Autonomous Listing Generator[/bold]\n"
         f"[dim]{MODEL} · outputs/brand_guide.md → outputs/master.txt[/dim]",
         style="cyan",
     ))

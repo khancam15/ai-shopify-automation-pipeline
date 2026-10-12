@@ -121,7 +121,7 @@ _PAGE_STRUCTURES: dict[str, list[str]] = {
         "Services — what you offer and why it works",
         "Case Studies — 2 brand deal examples with outcomes",
         "Packages & Pricing — tiered offerings",
-        "Testimonials — 2-3 brand quotes",
+        "Testimonials — placeholders for 2-3 client quotes",
         "Next Steps — CTA, contact info",
     ],
     "portfolio": [

@@ -15,7 +15,7 @@ Image slots (Shopify conversion strategy):
   2 — Features + price     (value proof — price anchoring)
   3 — Filled-in preview    (remove doubt — show exactly what they get)
   4 — How it works         (remove friction — 3-step, time-specific)
-  5 — Social proof         (trust + badges — outcome testimonial)
+  5 — Trust signals        (badges + factual product benefits)
   6 — Bundle value stack   (close the sale — perceived discount)
 
 Run:
@@ -141,14 +141,12 @@ SLOTS: list[SlotSpec] = [
     },
     {
         "slot": 5,
-        "role": "Social proof + trust badges",
+        "role": "Trust badges + product facts",
         "desc": (
-            "One specific outcome testimonial in a speech bubble: "
-            "'Landed my first $500 brand deal the week I used this — @ugccreator'. "
-            "Star rating: ★★★★★. "
-            "Badge row below: 'Beginner Friendly' | 'Instant Download' | 'Canva Compatible' | "
+            "Badge row: 'Beginner Friendly' | 'Instant Download' | 'Canva Compatible' | "
             "'5-Min Setup'. "
-            "Specific outcome quotes outperform generic praise by 3×."
+            "Below it, three short factual benefits drawn from the product listing. "
+            "Do not invent testimonials, quotes, reviews, star ratings, or customer results."
         ),
     },
     {

@@ -57,7 +57,7 @@ class Settings:
         self.shopify_store_domain: str = os.getenv("SHOPIFY_STORE_DOMAIN", "")
         self.shopify_access_token: str = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
         self.shopify_api_version: str = os.getenv("SHOPIFY_API_VERSION", "2024-01")
-        self.shopify_vendor: str = os.getenv("SHOPIFY_VENDOR", "Benjaire LLC")
+        self.shopify_vendor: str = os.getenv("SHOPIFY_VENDOR", os.getenv("BRAND_NAME", "Your Brand"))
 
         # ── Canva ─────────────────────────────────────────────────────────────
         self.canva_client_id: str = os.getenv("CANVA_CLIENT_ID", "")

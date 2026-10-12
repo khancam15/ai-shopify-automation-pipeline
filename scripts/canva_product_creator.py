@@ -162,7 +162,7 @@ _PAGE_STRUCTURES: dict[str, list[str]] = {
 def _load_brand_context() -> str:
     if not BRAND_GUIDE.exists():
         return (
-            "Brand: Benjaire LLC. "
+            f"Brand: {os.getenv('BRAND_NAME', 'Your Brand')}. "
             "Colors: cream #faf7f2 backgrounds, blush pink #c4a0a0 accents. "
             "Serif headlines, clean sans body, minimal editorial layout."
         )

@@ -162,7 +162,7 @@ def _create_product(
         "product": {
             "title":        payload["title"][:255],
             "body_html":    body_html,
-            "vendor":       os.getenv("SHOPIFY_VENDOR", "Benjaire LLC"),
+            "vendor":       os.getenv("SHOPIFY_VENDOR", os.getenv("BRAND_NAME", "Your Brand")),
             "product_type": payload.get("category", "Digital Template"),
             "tags":         tags_str,
             "status":       "active",
